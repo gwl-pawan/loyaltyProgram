@@ -434,6 +434,15 @@
         <span class="loyalty-points-widget__balance-label">Available points</span>
         <strong class="loyalty-points-widget__balance-value" data-loyalty-balance-value>--</strong>
       </div>
+      <div data-loyalty-referral-profile hidden style="margin-top: 16px;">
+        <strong>Refer a friend</strong>
+        <p data-loyalty-referral-copy style="margin: 6px 0;">Share your link and you both earn points after their first order.</p>
+        <div style="display: flex; gap: 8px;">
+          <input data-loyalty-referral-link readonly aria-label="Referral link" style="min-width: 0; flex: 1; padding: 8px;" />
+          <button type="button" data-loyalty-copy-referral>Copy</button>
+        </div>
+        <small data-loyalty-referral-stats></small>
+      </div>
       <div class="loyalty-points-widget__actions">
         <button class="loyalty-points-widget__action-link loyalty-points-widget__action-link--rewards" type="button" data-loyalty-view-target="available"><span aria-hidden="true">★</span><span><strong>Your Available rewards</strong><small data-loyalty-available-count>No rewards available</small></span><span aria-hidden="true">›</span></button>
         <button class="loyalty-points-widget__action-link" type="button" data-loyalty-view-target="earn"><span aria-hidden="true">＋</span><strong>Ways to earn</strong><span aria-hidden="true">›</span></button>

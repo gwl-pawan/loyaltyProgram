@@ -25,6 +25,194 @@ function getOrderName(payload) {
   ).trim();
 }
 
+function getRefundId(payload) {
+  return String(payload?.admin_graphql_api_id || payload?.id || "").trim();
+}
+
+function getRefundDate(payload) {
+  const dateValue = payload?.processed_at || payload?.created_at;
+  const date = dateValue ? new Date(dateValue) : null;
+
+  return date && !Number.isNaN(date.getTime()) ? date : new Date();
+}
+
+function getLatestDate(currentValue, nextValue) {
+  const currentDate = currentValue ? new Date(currentValue) : null;
+  const nextDate = nextValue ? new Date(nextValue) : null;
+
+  if (!nextDate || Number.isNaN(nextDate.getTime())) {
+    return currentDate || null;
+  }
+
+  if (!currentDate || Number.isNaN(currentDate.getTime())) {
+    return nextDate;
+  }
+
+  return nextDate > currentDate ? nextDate : currentDate;
+}
+
+function getMoneyAmount(value) {
+  const directAmount = Number(value);
+
+  if (Number.isFinite(directAmount)) {
+    return directAmount;
+  }
+
+  const nestedAmount = Number(value?.shop_money?.amount || value?.amount);
+
+  return Number.isFinite(nestedAmount) ? nestedAmount : 0;
+}
+
+function getRefundAmount(payload) {
+  const transactionTotal = (payload?.transactions || []).reduce(
+    (sum, transaction) => {
+      const kind = String(transaction?.kind || "").toLowerCase();
+      const status = String(transaction?.status || "").toLowerCase();
+
+      if (kind && kind !== "refund") {
+        return sum;
+      }
+
+      if (status && !["success", "succeeded"].includes(status)) {
+        return sum;
+      }
+
+      return sum + Math.abs(Number(transaction?.amount || 0));
+    },
+    0,
+  );
+
+  if (transactionTotal > 0) {
+    return transactionTotal;
+  }
+
+  return (payload?.refund_line_items || []).reduce((sum, item) => {
+    const subtotal = getMoneyAmount(item?.subtotal_set || item?.subtotal);
+    const tax = getMoneyAmount(item?.total_tax_set || item?.total_tax);
+
+    return sum + Math.abs(subtotal) + Math.abs(tax);
+  }, 0);
+}
+
+function isUniqueConstraintError(error) {
+  return error?.code === "P2002";
+}
+
+async function recordRefundMetric(
+  customerId,
+  orderId,
+  refundId,
+  refundAmount,
+  refundedAt,
+) {
+  const normalizedRefundId = String(refundId || "").trim();
+  const normalizedOrderId = String(orderId || "").trim();
+  const normalizedRefundAmount = Math.max(Number(refundAmount) || 0, 0);
+
+  if (!normalizedRefundId) {
+    await prisma.customer.update({
+      where: {
+        id: customerId,
+      },
+      data: {
+        lastActivityAt: refundedAt,
+      },
+    });
+
+    return {
+      created: true,
+      amountApplied: normalizedRefundAmount,
+    };
+  }
+
+  try {
+    const amountApplied = await prisma.$transaction(async (tx) => {
+      const customer = await tx.customer.findUnique({
+        where: {
+          id: customerId,
+        },
+        select: {
+          lifetimeSpend: true,
+          lastActivityAt: true,
+        },
+      });
+      const orderMetric = normalizedOrderId
+        ? await tx.customerOrderMetric.findUnique({
+            where: {
+              customerId_shopifyOrderId: {
+                customerId,
+                shopifyOrderId: normalizedOrderId,
+              },
+            },
+          })
+        : null;
+      const remainingOrderAmount = orderMetric
+        ? Math.max(
+            Number(orderMetric.orderTotal || 0) -
+              Number(orderMetric.refundedTotal || 0),
+            0,
+          )
+        : normalizedRefundAmount;
+      const cappedRefundAmount = Math.min(
+        normalizedRefundAmount,
+        remainingOrderAmount,
+      );
+
+      await tx.customerRefundMetric.create({
+        data: {
+          customerId,
+          customerOrderMetricId: orderMetric?.id || null,
+          shopifyRefundId: normalizedRefundId,
+          refundAmount: cappedRefundAmount,
+          refundedAt,
+        },
+      });
+
+      if (orderMetric && cappedRefundAmount > 0) {
+        await tx.customerOrderMetric.update({
+          where: {
+            id: orderMetric.id,
+          },
+          data: {
+            refundedTotal: {
+              increment: cappedRefundAmount,
+            },
+          },
+        });
+      }
+
+      await tx.customer.update({
+        where: {
+          id: customerId,
+        },
+        data: {
+          lifetimeSpend: Math.max(
+            Number(customer?.lifetimeSpend || 0) - cappedRefundAmount,
+            0,
+          ),
+          lastActivityAt: getLatestDate(customer?.lastActivityAt, refundedAt),
+        },
+      });
+
+      return cappedRefundAmount;
+    });
+
+    return {
+      created: true,
+      amountApplied,
+    };
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      return {
+        created: false,
+        amountApplied: 0,
+      };
+    }
+
+    throw error;
+  }
+}
+
 export const action = async ({ request }) => {
   let webhook;
 
@@ -43,14 +231,9 @@ export const action = async ({ request }) => {
       return new Response("No customer");
     }
 
-    const refundAmount = Number(payload.order.total_price);
+    const refundAmount = getRefundAmount(payload);
 
     const { shop: loyaltyShop, settings } = await getLoyaltySettings(shop);
-    const pointsToDeduct = calculateSpendPoints(
-      refundAmount,
-      settings.refundSpendAmount,
-      settings.refundSpendPoints,
-    );
 
     const customer = await prisma.customer.findFirst({
       where: {
@@ -63,6 +246,23 @@ export const action = async ({ request }) => {
       return new Response("Customer not found");
     }
 
+    const orderId = getOrderId(payload);
+    const orderName = getOrderName(payload);
+    const refundMetric = await recordRefundMetric(
+      customer.id,
+      orderId,
+      getRefundId(payload),
+      refundAmount,
+      getRefundDate(payload),
+    );
+    const pointsToDeduct = refundMetric.created
+      ? calculateSpendPoints(
+          refundAmount,
+          settings.refundSpendAmount,
+          settings.refundSpendPoints,
+        )
+      : 0;
+
     if (pointsToDeduct > 0) {
       // deduct points
       await prisma.customer.update({
@@ -73,6 +273,7 @@ export const action = async ({ request }) => {
           loyaltyPoints: {
             decrement: pointsToDeduct,
           },
+          lastActivityAt: new Date(),
         },
       });
 
@@ -86,9 +287,6 @@ export const action = async ({ request }) => {
         },
       });
     }
-
-    const orderId = getOrderId(payload);
-    const orderName = getOrderName(payload);
 
     if (orderId) {
       const redeemedRewards = await prisma.reward.findMany({
@@ -124,6 +322,7 @@ export const action = async ({ request }) => {
               loyaltyPoints: {
                 increment: reward.pointsUsed,
               },
+              lastActivityAt: new Date(),
             },
           });
 

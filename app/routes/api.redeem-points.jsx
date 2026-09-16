@@ -20,6 +20,7 @@ import {
   runShopifyGraphql,
 } from "../services/errors.server";
 import { normalizeCheckoutReward } from "../services/checkout-reward.js";
+import { tryExpireCustomerPoints } from "../services/points-expiry.server.js";
 
 // CORS HEADERS
 const corsHeaders = {
@@ -491,6 +492,12 @@ export const action = async ({ request }) => {
       );
     }
 
+    const expiryResult = await tryExpireCustomerPoints(customer.id);
+
+    if (expiryResult) {
+      customer.loyaltyPoints = expiryResult.balance;
+    }
+
     if (operation === "releasePendingReward") {
       const pendingRedemption = await getPendingCheckoutRedemption(
         customer.id,
@@ -736,6 +743,7 @@ export const action = async ({ request }) => {
             loyaltyPoints: {
               decrement: redeemPoints,
             },
+            lastActivityAt: new Date(),
           },
         });
 
@@ -748,6 +756,17 @@ export const action = async ({ request }) => {
             transactionType: "debit",
 
             reason: "Reward Redemption",
+          },
+        });
+      }
+
+      if (shouldDeferPointDeduction) {
+        await tx.customer.update({
+          where: {
+            id: customer.id,
+          },
+          data: {
+            lastActivityAt: new Date(),
           },
         });
       }
@@ -801,6 +820,11 @@ export const action = async ({ request }) => {
           message: "Store credit added successfully.",
           metadata: {
             amount: issuedReward.amount,
+            currencyCode: issuedReward.currencyCode,
+            balanceAfterTransaction: issuedReward.balanceAfterTransaction,
+            storeCreditAccountId: issuedReward.storeCreditAccountId,
+            storeCreditTransactionId: issuedReward.rewardCode,
+            transactionCreatedAt: issuedReward.transactionCreatedAt,
             pointsUsed: redeemPoints,
             rewardType: rewardTypeForStorage,
           },
@@ -818,6 +842,10 @@ export const action = async ({ request }) => {
           rewardType,
           rewardCode: issuedReward.rewardCode,
           amount: issuedReward.amount,
+          currencyCode: issuedReward.currencyCode,
+          balanceAfterTransaction: issuedReward.balanceAfterTransaction,
+          storeCreditAccountId: issuedReward.storeCreditAccountId,
+          transactionCreatedAt: issuedReward.transactionCreatedAt,
         }),
       },
       {
@@ -938,11 +966,7 @@ async function issueShopifyReward({
   return createDiscountReward({ admin, selectedReward, expiresAt });
 }
 
-async function createDiscountReward({
-  admin,
-  selectedReward,
-  expiresAt,
-}) {
+async function createDiscountReward({ admin, selectedReward, expiresAt }) {
   const rewardCode =
     "LOYALTY-" + Math.random().toString(36).substring(2, 8).toUpperCase();
   const discountTags = [
@@ -1081,6 +1105,22 @@ async function createStoreCreditReward({ admin, customer, selectedReward }) {
         ) {
           storeCreditAccountTransaction {
             id
+            amount {
+              amount
+              currencyCode
+            }
+            balanceAfterTransaction {
+              amount
+              currencyCode
+            }
+            createdAt
+            account {
+              id
+              balance {
+                amount
+                currencyCode
+              }
+            }
           }
           userErrors {
             field
@@ -1111,9 +1151,18 @@ async function createStoreCreditReward({ admin, customer, selectedReward }) {
     throw new Error("Shopify did not return a store credit transaction");
   }
 
+  const transaction = result.storeCreditAccountTransaction;
+
   return {
-    rewardCode: result.storeCreditAccountTransaction.id,
-    amount: selectedReward.amount,
-    currencyCode,
+    rewardCode: transaction.id,
+    amount: Number(transaction.amount?.amount || selectedReward.amount),
+    currencyCode: transaction.amount?.currencyCode || currencyCode,
+    balanceAfterTransaction: Number(
+      transaction.balanceAfterTransaction?.amount ??
+        transaction.account?.balance?.amount ??
+        0,
+    ),
+    storeCreditAccountId: transaction.account?.id || null,
+    transactionCreatedAt: transaction.createdAt || null,
   };
 }

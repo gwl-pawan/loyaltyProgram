@@ -7,6 +7,17 @@ import {
 import { useMemo, useState } from "react";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
+import { logError, runShopifyGraphql } from "../services/errors.server";
+import {
+  CUSTOMER_SEGMENT_LABELS,
+  CUSTOMER_SEGMENTS,
+  filterSegmentedCustomers,
+  getCustomerActivityDate,
+  getSegmentCounts,
+  normalizeSegmentFilter,
+  normalizeSegmentationRules,
+  segmentCustomers,
+} from "../services/customer-segmentation.shared";
 
 function parseSelectedCustomerIds(formData) {
   return formData
@@ -45,6 +56,143 @@ function buildSampleCsv(customers) {
   return [headers, ...rows]
     .map((row) => row.map(escapeCsvValue).join(","))
     .join("\n");
+}
+
+function normalizeShopifyCustomerGid(value) {
+  const customerId = String(value || "").trim();
+
+  if (!customerId) {
+    return "";
+  }
+
+  if (customerId.startsWith("gid://shopify/Customer/")) {
+    return customerId;
+  }
+
+  return `gid://shopify/Customer/${customerId.split("/").pop()}`;
+}
+
+function chunkItems(items, size) {
+  const chunks = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
+function toValidDate(value) {
+  const date = value ? new Date(value) : null;
+
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function getLatestDate(leftValue, rightValue) {
+  const left = toValidDate(leftValue);
+  const right = toValidDate(rightValue);
+
+  if (!left) {
+    return right;
+  }
+
+  if (!right) {
+    return left;
+  }
+
+  return right > left ? right : left;
+}
+
+function formatNullableDate(value) {
+  const date = toValidDate(value);
+
+  return date ? date.toLocaleDateString() : "No activity";
+}
+
+async function refreshCustomerMetricsFromShopify(admin, shopId) {
+  const localCustomers = await prisma.customer.findMany({
+    where: {
+      shopId,
+    },
+    select: {
+      id: true,
+      shopifyCustomerId: true,
+      lastActivityAt: true,
+    },
+  });
+  const customersByGid = new Map(
+    localCustomers
+      .map((customer) => [
+        normalizeShopifyCustomerGid(customer.shopifyCustomerId),
+        customer,
+      ])
+      .filter(([customerGid]) => customerGid),
+  );
+  let updated = 0;
+  let skipped = 0;
+
+  for (const batch of chunkItems(Array.from(customersByGid.keys()), 100)) {
+    const data = await runShopifyGraphql(
+      admin,
+      `#graphql
+        query CustomerSegmentMetrics($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Customer {
+              id
+              amountSpent {
+                amount
+              }
+              numberOfOrders
+              lastOrder {
+                createdAt
+              }
+            }
+          }
+        }
+      `,
+      {
+        variables: {
+          ids: batch,
+        },
+        operation: "Refresh customer segmentation metrics",
+      },
+    );
+
+    for (const node of data.nodes || []) {
+      if (!node?.id) {
+        skipped += 1;
+        continue;
+      }
+
+      const customer = customersByGid.get(node.id);
+
+      if (!customer) {
+        skipped += 1;
+        continue;
+      }
+
+      const lastOrderAt = toValidDate(node.lastOrder?.createdAt);
+
+      await prisma.customer.update({
+        where: {
+          id: customer.id,
+        },
+        data: {
+          lifetimeSpend: Math.max(Number(node.amountSpent?.amount || 0), 0),
+          orderCount: Math.max(Number(node.numberOfOrders || 0), 0),
+          lastOrderAt,
+          lastActivityAt: getLatestDate(customer.lastActivityAt, lastOrderAt),
+        },
+      });
+
+      updated += 1;
+    }
+  }
+
+  return {
+    updated,
+    skipped,
+  };
 }
 
 function parseCsvLine(line) {
@@ -198,6 +346,7 @@ async function applyPointAdjustment(tx, customer, operation, points, reason) {
           : {
               decrement: pointsToChange,
             },
+      lastActivityAt: new Date(),
     },
   });
 
@@ -218,11 +367,19 @@ async function applyPointAdjustment(tx, customer, operation, points, reason) {
 }
 
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  const url = new URL(request.url);
+  const selectedSegment = normalizeSegmentFilter(
+    url.searchParams.get("segment"),
+  );
+  let currencyCode = "USD";
 
   const shop = await prisma.shop.findUnique({
     where: {
       shopDomain: session.shop,
+    },
+    include: {
+      loyaltySetting: true,
     },
   });
 
@@ -230,7 +387,25 @@ export const loader = async ({ request }) => {
     return Response.json({
       customers: [],
       totalCustomers: 0,
+      segmentCounts: getSegmentCounts([]),
+      selectedSegment,
+      segmentationRules: normalizeSegmentationRules(),
+      currencyCode,
     });
+  }
+
+  try {
+    const currencyResponse = await admin.graphql(`#graphql
+      query CustomersShopCurrency {
+        shop {
+          currencyCode
+        }
+      }
+    `);
+    const currencyData = await currencyResponse.json();
+    currencyCode = currencyData.data?.shop?.currencyCode || currencyCode;
+  } catch {
+    currencyCode = "USD";
   }
 
   const customers = await prisma.customer.findMany({
@@ -249,19 +424,30 @@ export const loader = async ({ request }) => {
       createdAt: "desc",
     },
   });
+  const segmentedCustomers = segmentCustomers(customers, shop.loyaltySetting);
+  const filteredCustomers = filterSegmentedCustomers(
+    segmentedCustomers,
+    selectedSegment,
+  );
 
   return Response.json({
-    customers,
+    customers: filteredCustomers,
     totalCustomers: customers.length,
+    segmentCounts: getSegmentCounts(segmentedCustomers),
+    selectedSegment,
+    segmentationRules: normalizeSegmentationRules(shop.loyaltySetting),
+    currencyCode,
   });
 };
 
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const actionType = formData.get("actionType");
 
-  if (!["bulkPoints", "csvBulkPoints"].includes(actionType)) {
+  if (
+    !["bulkPoints", "csvBulkPoints", "refreshSegments"].includes(actionType)
+  ) {
     return Response.json(
       {
         success: false,
@@ -288,6 +474,33 @@ export const action = async ({ request }) => {
       },
       { status: 404 },
     );
+  }
+
+  if (actionType === "refreshSegments") {
+    let result;
+
+    try {
+      result = await refreshCustomerMetricsFromShopify(admin, shop.id);
+    } catch (error) {
+      logError("customers:refresh-segment-metrics", error, {
+        shop: session.shop,
+      });
+
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Could not refresh segment metrics from Shopify. Please try again.",
+        },
+        { status: 500 },
+      );
+    }
+
+    return Response.json({
+      success: true,
+      message: `Segment metrics refreshed for ${result.updated.toLocaleString()} customer(s).`,
+      ...result,
+    });
   }
 
   if (actionType === "csvBulkPoints") {
@@ -479,12 +692,25 @@ export const action = async ({ request }) => {
 };
 
 export default function CustomersPage() {
-  const { customers = [], totalCustomers = 0 } = useLoaderData();
+  const {
+    customers = [],
+    totalCustomers = 0,
+    segmentCounts = {},
+    selectedSegment = CUSTOMER_SEGMENTS.ALL,
+    segmentationRules = {},
+    currencyCode = "USD",
+  } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const [selectedCustomerIds, setSelectedCustomerIds] = useState([]);
   const formatter = new Intl.NumberFormat("en");
+  const currencyFormatter = new Intl.NumberFormat("en", {
+    style: "currency",
+    currency: currencyCode,
+  });
   const isSubmitting = navigation.state === "submitting";
+  const isRefreshingSegments =
+    isSubmitting && navigation.formData?.get("actionType") === "refreshSegments";
   const selectedCustomers = useMemo(
     () =>
       customers.filter((customer) => selectedCustomerIds.includes(customer.id)),
@@ -496,6 +722,10 @@ export default function CustomersPage() {
   );
   const totalRewards = customers.reduce(
     (sum, customer) => sum + (customer._count?.rewards || 0),
+    0,
+  );
+  const totalSpend = customers.reduce(
+    (sum, customer) => sum + Number(customer.lifetimeSpend || 0),
     0,
   );
   const selectedPoints = selectedCustomers.reduce(
@@ -534,6 +764,12 @@ export default function CustomersPage() {
       allVisibleSelected ? [] : customers.map((customer) => customer.id),
     );
   };
+  const segmentFilters = [
+    CUSTOMER_SEGMENTS.ALL,
+    CUSTOMER_SEGMENTS.VIP,
+    CUSTOMER_SEGMENTS.TOP_SPENDER,
+    CUSTOMER_SEGMENTS.INACTIVE,
+  ];
 
   return (
     <s-page heading="Customers" inlineSize="large">
@@ -554,6 +790,11 @@ export default function CustomersPage() {
             <span className="summary-label">Rewards created</span>
             <strong>{formatter.format(totalRewards)}</strong>
             <span className="summary-note">Redeemed reward records</span>
+          </div>
+          <div>
+            <span className="summary-label">Lifetime spend</span>
+            <strong>{currencyFormatter.format(totalSpend)}</strong>
+            <span className="summary-note">Visible customer net spend</span>
           </div>
         </section>
 
@@ -674,6 +915,73 @@ export default function CustomersPage() {
         </section>
 
         <section
+          className="segment-panel"
+          aria-labelledby="customer-segments-heading"
+        >
+          <div className="segment-panel-header">
+            <div>
+              <h2 id="customer-segments-heading">
+                Customer segmentation rules
+              </h2>
+              <p>
+                VIPs use lifetime spend, inactive customers use last order or
+                loyalty activity, and top spenders use the configured spend
+                percentile.
+              </p>
+            </div>
+            <Form method="post">
+              <input type="hidden" name="actionType" value="refreshSegments" />
+              <s-button type="submit" loading={isRefreshingSegments}>
+                Refresh metrics
+              </s-button>
+            </Form>
+          </div>
+
+          <div className="segment-rule-summary">
+            <span>
+              VIP at {currencyFormatter.format(
+                segmentationRules.vipSpendThreshold || 0,
+              )}
+            </span>
+            <span>
+              Inactive after {formatter.format(
+                segmentationRules.inactiveCustomerDays || 0,
+              )} days
+            </span>
+            <span>
+              Top {formatter.format(segmentationRules.topSpenderPercent || 0)}%
+              by spend
+            </span>
+          </div>
+
+          <div className="segment-filter-grid">
+            {segmentFilters.map((segment) => {
+              const href =
+                segment === CUSTOMER_SEGMENTS.ALL
+                  ? "/app/customers"
+                  : `/app/customers?segment=${segment}`;
+
+              return (
+                <a
+                  className={
+                    selectedSegment === segment
+                      ? "segment-filter-card active"
+                      : "segment-filter-card"
+                  }
+                  href={href}
+                  key={segment}
+                >
+                  <span>{CUSTOMER_SEGMENT_LABELS[segment]}</span>
+                  <strong>
+                    {formatter.format(segmentCounts[segment] || 0)}
+                  </strong>
+                </a>
+              );
+            })}
+          </div>
+        </section>
+
+        <section
           className="customer-panel"
           aria-labelledby="customer-list-heading"
         >
@@ -700,9 +1008,13 @@ export default function CustomersPage() {
                     </th>
                     <th>Customer</th>
                     <th>Email</th>
+                    <th>Segments</th>
+                    <th className="numeric">Lifetime spend</th>
+                    <th className="numeric">Orders</th>
                     <th className="numeric">Points</th>
                     <th className="numeric">Transactions</th>
                     <th className="numeric">Rewards</th>
+                    <th>Last activity</th>
                     <th>Joined</th>
                   </tr>
                 </thead>
@@ -733,6 +1045,27 @@ export default function CustomersPage() {
                       <td className="secondary">
                         {customer.email || "No email"}
                       </td>
+                      <td>
+                        <div className="segment-badges">
+                          {customer.segments?.length > 0 ? (
+                            customer.segments.map((segment) => (
+                              <span className="segment-badge" key={segment}>
+                                {CUSTOMER_SEGMENT_LABELS[segment]}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="segment-badge muted">
+                              Standard
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="numeric">
+                        {currencyFormatter.format(customer.lifetimeSpend || 0)}
+                      </td>
+                      <td className="numeric">
+                        {formatter.format(customer.orderCount || 0)}
+                      </td>
                       <td className="numeric">
                         <span className="points-pill">
                           {formatter.format(customer.loyaltyPoints || 0)}
@@ -743,6 +1076,9 @@ export default function CustomersPage() {
                       </td>
                       <td className="numeric">
                         {formatter.format(customer._count?.rewards || 0)}
+                      </td>
+                      <td className="secondary">
+                        {formatNullableDate(getCustomerActivityDate(customer))}
                       </td>
                       <td className="secondary">
                         {new Date(customer.createdAt).toLocaleDateString()}
@@ -771,17 +1107,19 @@ export default function CustomersPage() {
 
 const customerStyles = `
   .customers-layout { display: grid; gap: 18px; padding: 18px 0 32px; }
-  .customer-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  .customer-summary > div, .customer-panel, .bulk-panel { background: #fff; border: 1px solid #dfe3e8; border-radius: 8px; box-shadow: 0 1px 0 rgba(26, 26, 26, .04); }
+  .customer-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .customer-summary > div, .customer-panel, .bulk-panel, .segment-panel { background: #fff; border: 1px solid #dfe3e8; border-radius: 8px; box-shadow: 0 1px 0 rgba(26, 26, 26, .04); }
   .customer-summary > div { display: grid; gap: 4px; min-height: 108px; padding: 18px 20px; position: relative; }
   .customer-summary > div::before { background: #008060; border-radius: 999px; content: ""; height: 32px; position: absolute; right: 18px; top: 18px; width: 4px; }
   .summary-label { color: #5c6670; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
   .customer-summary strong { color: #202223; font-size: 28px; line-height: 34px; }
   .summary-note { color: #6d7175; font-size: 13px; line-height: 18px; }
   .bulk-panel { display: grid; gap: 18px; padding: 22px; }
+  .segment-panel { display: grid; gap: 16px; padding: 22px; }
   .bulk-panel-header { align-items: start; display: flex; gap: 16px; justify-content: space-between; }
-  .bulk-panel-header h2 { margin: 0; color: #202223; font-size: 17px; line-height: 24px; }
-  .bulk-panel-header p { margin: 4px 0 0; color: #5f6b76; font-size: 13px; }
+  .segment-panel-header { align-items: start; display: flex; gap: 16px; justify-content: space-between; }
+  .bulk-panel-header h2, .segment-panel-header h2 { margin: 0; color: #202223; font-size: 17px; line-height: 24px; }
+  .bulk-panel-header p, .segment-panel-header p { margin: 4px 0 0; color: #5f6b76; font-size: 13px; }
   .bulk-panel-header span, .customer-panel-header > span { background: #eef7ff; border: 1px solid #b8dcff; border-radius: 999px; color: #005bd3; font-size: 12px; font-weight: 750; line-height: 16px; padding: 4px 10px; white-space: nowrap; }
   .bulk-message { border-radius: 8px; font-size: 13px; line-height: 20px; padding: 10px 12px; }
   .bulk-message.success { background: #eaf8f1; border: 1px solid #aee9d1; color: #006c48; }
@@ -806,11 +1144,18 @@ const customerStyles = `
   .bulk-footer strong { color: #202223; font-size: 18px; line-height: 24px; }
   .bulk-footer span { color: #5f6b76; font-size: 13px; line-height: 20px; }
   .customer-panel { overflow: hidden; }
+  .segment-rule-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+  .segment-rule-summary span { background: #f7f9fb; border: 1px solid #e3e8ef; border-radius: 999px; color: #303030; font-size: 12px; font-weight: 700; line-height: 16px; padding: 6px 10px; }
+  .segment-filter-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .segment-filter-card { background: #f7f9fb; border: 1px solid #e3e8ef; border-radius: 8px; color: inherit; display: grid; gap: 6px; padding: 14px; text-decoration: none; }
+  .segment-filter-card.active { background: #eaf8f1; border-color: #008060; }
+  .segment-filter-card span { color: #5c6670; font-size: 12px; font-weight: 800; letter-spacing: .04em; line-height: 16px; text-transform: uppercase; }
+  .segment-filter-card strong { color: #202223; font-size: 24px; line-height: 30px; }
   .customer-panel-header { align-items: center; border-bottom: 1px solid #e3e8ef; display: flex; gap: 16px; justify-content: space-between; padding: 18px 22px; }
   .customer-panel-header h2 { margin: 0; color: #202223; font-size: 17px; line-height: 24px; }
   .customer-panel-header p { margin: 3px 0 0; color: #5f6b76; font-size: 13px; }
   .customer-table-scroll { overflow-x: auto; }
-  .customer-panel table { width: 100%; border-collapse: collapse; min-width: 760px; }
+  .customer-panel table { width: 100%; border-collapse: collapse; min-width: 1120px; }
   .customer-panel th { padding: 12px 16px; background: #f7f9fb; border-bottom: 1px solid #e3e8ef; color: #5c6670; font-size: 11px; font-weight: 800; letter-spacing: .04em; text-align: left; text-transform: uppercase; }
   .customer-panel td { padding: 16px; border-bottom: 1px solid #edf0f3; color: #202223; font-size: 13px; vertical-align: middle; }
   .customer-panel tbody tr:last-child td { border-bottom: 0; }
@@ -821,12 +1166,16 @@ const customerStyles = `
   .customer-panel .secondary { color: #616a75; }
   .customer-name-cell { align-items: center; display: flex; gap: 10px; }
   .customer-name-cell span { align-items: center; background: #e3f8ef; border: 1px solid #aee9d1; border-radius: 999px; color: #006c48; display: inline-flex; flex: 0 0 auto; font-size: 12px; font-weight: 800; height: 30px; justify-content: center; width: 30px; }
+  .segment-badges { display: flex; flex-wrap: wrap; gap: 6px; min-width: 170px; }
+  .segment-badge { background: #eef7ff; border: 1px solid #b8dcff; border-radius: 999px; color: #005bd3; display: inline-flex; font-size: 11px; font-weight: 800; line-height: 14px; padding: 4px 8px; white-space: nowrap; }
+  .segment-badge.muted { background: #f1f2f3; border-color: #d9dce0; color: #616a75; }
   .points-pill { display: inline-flex; min-width: 48px; justify-content: center; padding: 5px 12px; border-radius: 999px; background: #dff7ec; color: #006c48; font-weight: 800; }
   .customer-empty-state { display: grid; justify-items: center; padding: 52px 24px 58px; text-align: center; }
   .empty-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 14px; border-radius: 50%; background: #f1f2f3; color: #616a75; font-size: 0; }
   .empty-icon::before { content: ""; width: 14px; height: 14px; border: 2px solid currentColor; border-radius: 50%; }
   .customer-empty-state h3 { margin: 0; color: #202223; font-size: 16px; }
   .customer-empty-state p { margin: 6px 0 0; color: #616a75; font-size: 13px; }
-  @media (max-width: 900px) { .bulk-form-grid, .csv-card { grid-template-columns: 1fr; } .bulk-footer { align-items: stretch; display: grid; } }
-  @media (max-width: 700px) { .customer-summary { grid-template-columns: 1fr; } }
+  @media (max-width: 1000px) { .customer-summary, .segment-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 900px) { .bulk-form-grid, .csv-card { grid-template-columns: 1fr; } .bulk-footer, .segment-panel-header { align-items: stretch; display: grid; } }
+  @media (max-width: 700px) { .customer-summary, .segment-filter-grid { grid-template-columns: 1fr; } }
 `;

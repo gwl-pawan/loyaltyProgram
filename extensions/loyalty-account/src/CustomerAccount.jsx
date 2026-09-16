@@ -5,7 +5,13 @@ import {
   useSettings,
 } from "@shopify/ui-extensions/customer-account/preact";
 import { render } from "preact";
-import { useEffect, useMemo, useRef, useState, useCallback } from "preact/hooks";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+} from "preact/hooks";
 import { fetchApiJson } from "./api";
 import { API_BASE_URL as FALLBACK_API_BASE_URL } from "./api-base-url";
 import { API_BASE_URL } from "./api-base-url.generated";
@@ -24,6 +30,7 @@ const ACTIVITY_APPEARANCE = {
   store_credit_created: { icon: "check-circle", tone: "success" },
   store_credit_failed: { icon: "x-circle", tone: "critical" },
   points_refunded: { icon: "return", tone: "success" },
+  points_expired: { icon: "clock", tone: "warning" },
 };
 
 function getRewardTypeBadge(activityType) {
@@ -39,11 +46,18 @@ function getRewardTypeBadge(activityType) {
     return { icon: "return", label: "POINTS", tone: "success" };
   }
 
+  if (activityType === "points_expired") {
+    return { icon: "clock", label: "POINTS", tone: "warning" };
+  }
+
   return { icon: "discount", label: "DISCOUNT", tone: "info" };
 }
 
 function getActivityStatusLabel(label) {
-  const status = String(label || "Activity").trim().split(/\s+/).pop();
+  const status = String(label || "Activity")
+    .trim()
+    .split(/\s+/)
+    .pop();
 
   return status
     ? `${status.charAt(0).toUpperCase()}${status.slice(1).toLowerCase()}`
@@ -102,6 +116,27 @@ function formatCurrency(value, currencyCode = "USD") {
   }
 }
 
+function getStoreCreditTransactionLabel(type) {
+  return (
+    {
+      credit: "Credit added",
+      debit: "Used at checkout",
+      debit_revert: "Credit returned",
+      expiration: "Credit expired",
+    }[type] || "Balance updated"
+  );
+}
+
+function getStoreCreditTransactionTone(type) {
+  if (type === "expiration") return "critical";
+  if (type === "debit") return "warning";
+  return "success";
+}
+
+function getShopifyId(value) {
+  return value ? String(value).split("/").pop() : "";
+}
+
 function normalizeStoreCreditReward(reward) {
   const points = Number(reward?.points);
   const amount = Number(reward?.amount);
@@ -136,7 +171,10 @@ function normalizeShopDomain(value) {
   try {
     return new URL(value).hostname;
   } catch {
-    return value.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    return value
+      .trim()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "");
   }
 }
 
@@ -200,7 +238,9 @@ function buildApiUrl(apiBaseUrl, endpoint, params) {
 }
 
 function buildApiUrls(apiBaseUrls, endpoint, params) {
-  return apiBaseUrls.map((apiBaseUrl) => buildApiUrl(apiBaseUrl, endpoint, params));
+  return apiBaseUrls.map((apiBaseUrl) =>
+    buildApiUrl(apiBaseUrl, endpoint, params),
+  );
 }
 
 function buildCustomerAccountIframeUrl(
@@ -255,6 +295,8 @@ export function CustomerAccountLoyaltyPoints() {
   const [customerId, setCustomerId] = useState(null);
   const [storeCreditReward, setStoreCreditReward] = useState(null);
   const [storeCreditBalance, setStoreCreditBalance] = useState(null);
+  const [storeCreditAccounts, setStoreCreditAccounts] = useState([]);
+  const [storeCreditHistory, setStoreCreditHistory] = useState([]);
   const [currencyCode, setCurrencyCode] = useState("USD");
   const [storeCreditPoints, setStoreCreditPoints] = useState("");
   const [isLoading, setIsLoading] = useState(Boolean(customer?.id));
@@ -266,8 +308,10 @@ export function CustomerAccountLoyaltyPoints() {
   const [history, setHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
+  const [storeCreditHistoryPage, setStoreCreditHistoryPage] = useState(1);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const confirmationModalRef = useRef(null);
+  const historyRequestIdRef = useRef(0);
   const pointsLabel = `${points.toLocaleString()} ${points === 1 ? "point" : "points"}`;
 
   // Extension editor values override API-managed defaults.
@@ -279,10 +323,7 @@ export function CustomerAccountLoyaltyPoints() {
     "accountLoginMessage",
     "Sign in to view loyalty points.",
   );
-  const balanceTitle = getTextSetting(
-    "accountBalanceTitle",
-    "Loyalty balance",
-  );
+  const balanceTitle = getTextSetting("accountBalanceTitle", "Loyalty balance");
   const availableLabel = getTextSetting(
     "accountAvailableLabel",
     "Available points",
@@ -299,14 +340,8 @@ export function CustomerAccountLoyaltyPoints() {
     "accountConversionRateText",
     "{points} points = {amount} store credit",
   );
-  const loadingText = getTextSetting(
-    "accountLoadingText",
-    "Loading...",
-  );
-  const redeemingText = getTextSetting(
-    "accountRedeemingText",
-    "Converting...",
-  );
+  const loadingText = getTextSetting("accountLoadingText", "Loading...");
+  const redeemingText = getTextSetting("accountRedeemingText", "Converting...");
   const convertButtonText = getTextSetting(
     "accountRedeemButtonText",
     "Convert to store credit",
@@ -386,6 +421,8 @@ export function CustomerAccountLoyaltyPoints() {
       setCustomerId(null);
       setStoreCreditReward(null);
       setStoreCreditBalance(null);
+      setStoreCreditAccounts([]);
+      setStoreCreditHistory([]);
       setStoreCreditPoints("");
       setIsRedemptionEnabled(true);
       setMessage(configErrorMsg);
@@ -398,6 +435,8 @@ export function CustomerAccountLoyaltyPoints() {
       setCustomerId(null);
       setStoreCreditReward(null);
       setStoreCreditBalance(null);
+      setStoreCreditAccounts([]);
+      setStoreCreditHistory([]);
       setStoreCreditPoints("");
       setIsRedemptionEnabled(true);
       setMessage(loginMessage);
@@ -432,6 +471,7 @@ export function CustomerAccountLoyaltyPoints() {
         setPoints(data.loyaltyPoints || 0);
         setCurrencyCode(data.currencyCode || "USD");
         setStoreCreditBalance(data.storeCreditBalance || null);
+        setStoreCreditAccounts(data.storeCreditAccounts || []);
         setIsRedemptionEnabled(data.checkoutRedemptionEnabled !== false);
         const nextStoreCreditReward = normalizeStoreCreditReward(
           data.storeCreditReward,
@@ -450,6 +490,7 @@ export function CustomerAccountLoyaltyPoints() {
           setCustomerId(null);
           setStoreCreditReward(null);
           setStoreCreditBalance(null);
+          setStoreCreditAccounts([]);
           setStoreCreditPoints("");
           setMessage(error.message || "Could not load points");
         }
@@ -479,7 +520,7 @@ export function CustomerAccountLoyaltyPoints() {
     if (isResolvingProxyBaseUrl || !customer?.id) return;
     if (apiBaseUrls.length === 0) return;
 
-    let isCurrent = true;
+    const requestId = ++historyRequestIdRef.current;
     setIsLoadingHistory(true);
 
     try {
@@ -493,34 +534,39 @@ export function CustomerAccountLoyaltyPoints() {
         "Could not load reward history. Please try again.",
       );
 
-      if (isCurrent && data?.success) {
+      if (requestId !== historyRequestIdRef.current) return;
+
+      if (data?.success) {
         setHistory(data.history || []);
+        setStoreCreditAccounts(data.storeCreditAccounts || []);
+        setStoreCreditHistory(data.storeCreditHistory || []);
+        if (data.storeCreditBalance) {
+          setStoreCreditBalance(data.storeCreditBalance);
+        }
         setHistoryPage(1);
-      } else if (isCurrent) {
+        setStoreCreditHistoryPage(1);
+      } else {
         throw new Error(data?.message || "Could not load reward history");
       }
     } catch (error) {
       console.error("History error:", error);
-      if (isCurrent) {
+      if (requestId === historyRequestIdRef.current) {
         setHistory([]);
         setMessage(error.message || "Could not load reward history");
       }
     } finally {
-      if (isCurrent) setIsLoadingHistory(false);
+      if (requestId === historyRequestIdRef.current) {
+        setIsLoadingHistory(false);
+      }
     }
-
-    return () => {
-      isCurrent = false;
-    };
-  }, [
-    apiBaseUrls,
-    customer?.id,
-    isResolvingProxyBaseUrl,
-    proxyShopDomain,
-  ]);
+  }, [apiBaseUrls, customer?.id, isResolvingProxyBaseUrl, proxyShopDomain]);
 
   useEffect(() => {
     fetchHistory();
+
+    return () => {
+      historyRequestIdRef.current += 1;
+    };
   }, [fetchHistory]);
 
   const filteredHistory = useMemo(() => {
@@ -539,6 +585,14 @@ export function CustomerAccountLoyaltyPoints() {
   const paginatedHistory = filteredHistory.slice(
     (historyPage - 1) * HISTORY_PAGE_SIZE,
     historyPage * HISTORY_PAGE_SIZE,
+  );
+  const storeCreditHistoryPageCount = Math.max(
+    1,
+    Math.ceil(storeCreditHistory.length / HISTORY_PAGE_SIZE),
+  );
+  const paginatedStoreCreditHistory = storeCreditHistory.slice(
+    (storeCreditHistoryPage - 1) * HISTORY_PAGE_SIZE,
+    storeCreditHistoryPage * HISTORY_PAGE_SIZE,
   );
 
   const handleHistorySearch = (event) => {
@@ -614,11 +668,31 @@ export function CustomerAccountLoyaltyPoints() {
 
       setPoints((prev) => prev - pointsToRedeem);
       setStoreCreditBalance((previousBalance) => ({
-        amount:
-          Number(previousBalance?.amount || 0) + Number(data.reward.amount || 0),
+        amount: Number.isFinite(Number(data.reward.balanceAfterTransaction))
+          ? Number(data.reward.balanceAfterTransaction)
+          : Number(previousBalance?.amount || 0) +
+            Number(data.reward.amount || 0),
         currencyCode:
-          previousBalance?.currencyCode || data.reward.currencyCode || currencyCode,
+          data.reward.currencyCode ||
+          previousBalance?.currencyCode ||
+          currencyCode,
       }));
+      setStoreCreditHistory((currentHistory) => [
+        {
+          id: data.reward.rewardCode,
+          accountId: data.reward.storeCreditAccountId,
+          type: "credit",
+          amount: Number(data.reward.amount || 0),
+          currencyCode: data.reward.currencyCode || currencyCode,
+          balanceAfterTransaction: Number(
+            data.reward.balanceAfterTransaction || 0,
+          ),
+          createdAt:
+            data.reward.transactionCreatedAt || new Date().toISOString(),
+        },
+        ...currentHistory.filter((item) => item.id !== data.reward.rewardCode),
+      ]);
+      setStoreCreditHistoryPage(1);
       setStoreCreditPoints(String(storeCreditReward.points));
       setMessage(
         formatSettingText(storeCreditSuccessMsg, {
@@ -628,7 +702,10 @@ export function CustomerAccountLoyaltyPoints() {
       confirmationModalRef.current?.hideOverlay();
       // Refresh the host account page so Shopify's store-credit balance updates.
       // eslint-disable-next-line no-undef
-      if (typeof shopify !== "undefined" && typeof shopify.reload === "function") {
+      if (
+        typeof shopify !== "undefined" &&
+        typeof shopify.reload === "function"
+      ) {
         // eslint-disable-next-line no-undef
         shopify.reload();
       }
@@ -731,6 +808,15 @@ export function CustomerAccountLoyaltyPoints() {
           </s-button>
           <s-button
             slot="secondary-actions"
+            variant={
+              activeTab === "store-credit-history" ? "primary" : "secondary"
+            }
+            onClick={() => setActiveTab("store-credit-history")}
+          >
+            Credit history
+          </s-button>
+          <s-button
+            slot="secondary-actions"
             variant={activeTab === "history" ? "primary" : "secondary"}
             onClick={() => setActiveTab("history")}
           >
@@ -817,7 +903,11 @@ export function CustomerAccountLoyaltyPoints() {
                     onChange={handleStoreCreditPointsInput}
                   />
 
-                  <s-box background="subdued" padding="base" borderRadius="base">
+                  <s-box
+                    background="subdued"
+                    padding="base"
+                    borderRadius="base"
+                  >
                     <s-grid
                       gridTemplateColumns="1fr auto"
                       gap="base"
@@ -854,8 +944,8 @@ export function CustomerAccountLoyaltyPoints() {
                   >
                     <s-stack gap="base">
                       <s-text>
-                        Convert {selectedStoreCreditPoints.toLocaleString()} points
-                        into ${selectedStoreCreditAmount} store credit?
+                        Convert {selectedStoreCreditPoints.toLocaleString()}{" "}
+                        points into ${selectedStoreCreditAmount} store credit?
                       </s-text>
                       <s-text>
                         Your loyalty balance will be reduced after confirmation.
@@ -887,6 +977,173 @@ export function CustomerAccountLoyaltyPoints() {
                 </s-stack>
               </s-section>
             ) : null}
+          </s-stack>
+        ) : activeTab === "store-credit-history" ? (
+          <s-stack gap="large">
+            <s-grid
+              gridTemplateColumns="1fr auto"
+              gap="base"
+              alignItems="center"
+            >
+              <s-stack direction="inline" gap="small" alignItems="center">
+                <s-icon type="cash-dollar" tone="success" />
+                <s-stack gap="none">
+                  <s-heading>Store credit history</s-heading>
+                  <s-text color="subdued">
+                    Credits, checkout usage, returns, and expirations
+                  </s-text>
+                </s-stack>
+              </s-stack>
+              <s-button
+                variant="secondary"
+                loading={isLoadingHistory}
+                disabled={isLoadingHistory}
+                onClick={fetchHistory}
+              >
+                Refresh
+              </s-button>
+            </s-grid>
+
+            {storeCreditAccounts.length > 0 ? (
+              <s-grid
+                gridTemplateColumns={`repeat(${Math.min(storeCreditAccounts.length, 3)}, 1fr)`}
+                gap="base"
+              >
+                {storeCreditAccounts.map((account) => (
+                  <s-box
+                    key={account.id}
+                    background="subdued"
+                    padding="base"
+                    borderRadius="large"
+                  >
+                    <s-stack gap="none">
+                      <s-text color="subdued" type="small">
+                        {account.currencyCode} balance
+                      </s-text>
+                      <s-heading>
+                        {formatCurrency(account.amount, account.currencyCode)}
+                      </s-heading>
+                    </s-stack>
+                  </s-box>
+                ))}
+              </s-grid>
+            ) : null}
+
+            {isLoadingHistory ? (
+              <s-box background="subdued" padding="large" borderRadius="large">
+                <s-stack direction="inline" gap="small" alignItems="center">
+                  <s-spinner size="small" />
+                  <s-text>{loadingText}</s-text>
+                </s-stack>
+              </s-box>
+            ) : storeCreditHistory.length === 0 ? (
+              <s-box background="subdued" padding="large" borderRadius="large">
+                <s-stack gap="base" alignItems="center">
+                  <s-icon type="clock" size="large" tone="neutral" />
+                  <s-heading>No store credit history yet</s-heading>
+                  <s-text color="subdued">
+                    Store credit changes will appear after credit is added or
+                    used.
+                  </s-text>
+                </s-stack>
+              </s-box>
+            ) : (
+              <s-stack gap="base">
+                {paginatedStoreCreditHistory.map((item) => (
+                  <s-box
+                    key={`${item.accountId}-${item.id}-${item.createdAt}`}
+                    border="base"
+                    borderRadius="large"
+                    padding="base"
+                  >
+                    <s-grid
+                      gridTemplateColumns="1fr auto"
+                      gap="base"
+                      alignItems="center"
+                    >
+                      <s-stack
+                        direction="inline"
+                        gap="small"
+                        alignItems="center"
+                      >
+                        <s-icon
+                          type="cash-dollar"
+                          tone={getStoreCreditTransactionTone(item.type)}
+                        />
+                        <s-stack gap="none">
+                          <s-text type="strong">
+                            {getStoreCreditTransactionLabel(item.type)}
+                          </s-text>
+                          <s-text color="subdued" type="small">
+                            {item.createdAt
+                              ? new Date(item.createdAt).toLocaleString()
+                              : "-"}
+                          </s-text>
+                          {item.type === "debit" && item.orderId ? (
+                            <s-text color="subdued" type="small">
+                              Order {item.orderName || ""}
+                              {item.orderName && getShopifyId(item.orderId)
+                                ? ` · ID ${getShopifyId(item.orderId)}`
+                                : getShopifyId(item.orderId)}
+                            </s-text>
+                          ) : null}
+                        </s-stack>
+                      </s-stack>
+                      <s-stack gap="none" alignItems="end">
+                        <s-heading>
+                          {item.amount > 0 ? "+" : ""}
+                          {formatCurrency(item.amount, item.currencyCode)}
+                        </s-heading>
+                        <s-text color="subdued" type="small">
+                          Balance{" "}
+                          {formatCurrency(
+                            item.balanceAfterTransaction,
+                            item.currencyCode,
+                          )}
+                        </s-text>
+                      </s-stack>
+                    </s-grid>
+                  </s-box>
+                ))}
+
+                {storeCreditHistoryPageCount > 1 ? (
+                  <s-grid
+                    gridTemplateColumns="1fr auto"
+                    gap="base"
+                    alignItems="center"
+                  >
+                    <s-text color="subdued">
+                      Page {storeCreditHistoryPage} of{" "}
+                      {storeCreditHistoryPageCount}
+                    </s-text>
+                    <s-button-group>
+                      <s-button
+                        slot="secondary-actions"
+                        variant="secondary"
+                        disabled={storeCreditHistoryPage === 1}
+                        onClick={() =>
+                          setStoreCreditHistoryPage((page) => page - 1)
+                        }
+                      >
+                        Previous
+                      </s-button>
+                      <s-button
+                        slot="primary-action"
+                        variant="primary"
+                        disabled={
+                          storeCreditHistoryPage === storeCreditHistoryPageCount
+                        }
+                        onClick={() =>
+                          setStoreCreditHistoryPage((page) => page + 1)
+                        }
+                      >
+                        Next
+                      </s-button>
+                    </s-button-group>
+                  </s-grid>
+                ) : null}
+              </s-stack>
+            )}
           </s-stack>
         ) : (
           <s-stack gap="large">
@@ -942,7 +1199,9 @@ export function CustomerAccountLoyaltyPoints() {
                     tone="neutral"
                   />
                   <s-heading>
-                    {historySearch ? "No matching activity" : "No reward history yet"}
+                    {historySearch
+                      ? "No matching activity"
+                      : "No reward history yet"}
                   </s-heading>
                   <s-text color="subdued">
                     {historySearch
@@ -980,7 +1239,9 @@ export function CustomerAccountLoyaltyPoints() {
                     "store_credit",
                   )
                     ? "Store credit"
-                    : item.rewardCode || "Reward activity";
+                    : item.activityType === "points_expired"
+                      ? "Points expiry"
+                      : item.rewardCode || "Reward activity";
                   const hasOrder = Boolean(item.orderName || item.orderId);
 
                   return (
@@ -1034,7 +1295,9 @@ export function CustomerAccountLoyaltyPoints() {
                         </s-grid>
 
                         <s-grid
-                          gridTemplateColumns={hasOrder ? "1fr 1fr 1fr" : "1fr 1fr"}
+                          gridTemplateColumns={
+                            hasOrder ? "1fr 1fr 1fr" : "1fr 1fr"
+                          }
                           gap="small"
                         >
                           <s-box
@@ -1043,8 +1306,12 @@ export function CustomerAccountLoyaltyPoints() {
                             borderRadius="base"
                           >
                             <s-stack gap="none">
-                              <s-text color="subdued" type="small">Points</s-text>
-                              <s-text type="strong">{item.pointsUsed ?? "-"}</s-text>
+                              <s-text color="subdued" type="small">
+                                Points
+                              </s-text>
+                              <s-text type="strong">
+                                {item.pointsUsed ?? "-"}
+                              </s-text>
                             </s-stack>
                           </s-box>
                           <s-box
@@ -1053,10 +1320,15 @@ export function CustomerAccountLoyaltyPoints() {
                             borderRadius="base"
                           >
                             <s-stack gap="none">
-                              <s-text color="subdued" type="small">Amount</s-text>
+                              <s-text color="subdued" type="small">
+                                Amount
+                              </s-text>
                               <s-text type="strong">
                                 {item.discountAmount
-                                  ? formatCurrency(item.discountAmount, currencyCode)
+                                  ? formatCurrency(
+                                      item.discountAmount,
+                                      currencyCode,
+                                    )
                                   : "-"}
                               </s-text>
                             </s-stack>
@@ -1068,7 +1340,9 @@ export function CustomerAccountLoyaltyPoints() {
                               borderRadius="base"
                             >
                               <s-stack gap="none">
-                                <s-text color="subdued" type="small">Order</s-text>
+                                <s-text color="subdued" type="small">
+                                  Order
+                                </s-text>
                                 <s-text type="strong">
                                   {item.orderName || item.orderId}
                                 </s-text>

@@ -5,6 +5,7 @@ export async function addSignupBonus(shopDomain, customerData) {
   const { shop, settings } = await getLoyaltySettings(shopDomain);
 
   return prisma.$transaction(async (tx) => {
+    const now = new Date();
     let customer = await tx.customer.findFirst({
       where: {
         shopId: shop.id,
@@ -23,6 +24,7 @@ export async function addSignupBonus(shopDomain, customerData) {
         name: `${customerData.first_name || ""} ${customerData.last_name || ""}`.trim(),
         email: customerData.email,
         loyaltyPoints: settings.signupBonusPoints,
+        lastActivityAt: now,
       },
     });
 

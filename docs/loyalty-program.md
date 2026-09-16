@@ -9,6 +9,7 @@ The application currently supports:
 - Signup bonus points.
 - Points earned from order value.
 - Point deductions for refunds.
+- Referral links, conversion tracking, and first-paid-order rewards.
 - Discount-code rewards.
 - Gift-card rewards.
 - Shopify store-credit rewards.
@@ -19,15 +20,15 @@ The application currently supports:
 
 ## 2. Technology stack
 
-| Area | Technology |
-| --- | --- |
-| Admin application | React 18, React Router 7, Shopify App Bridge, Polaris web components |
-| Server | Node.js 20+, React Router server runtime |
-| Database | MySQL with Prisma ORM |
-| Shopify integration | Shopify Admin GraphQL API, app proxy, webhooks, UI extensions, theme app extension |
-| Storefront | Liquid/theme extension and optional Hydrogen React storefront |
-| Production container | Docker, `node:20-alpine` |
-| Current hosting configuration | Railway application service plus Railway MySQL |
+| Area                          | Technology                                                                         |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| Admin application             | React 18, React Router 7, Shopify App Bridge, Polaris web components               |
+| Server                        | Node.js 20+, React Router server runtime                                           |
+| Database                      | MySQL with Prisma ORM                                                              |
+| Shopify integration           | Shopify Admin GraphQL API, app proxy, webhooks, UI extensions, theme app extension |
+| Storefront                    | Liquid/theme extension and optional Hydrogen React storefront                      |
+| Production container          | Docker, `node:20-alpine`                                                           |
+| Current hosting configuration | Railway application service plus Railway MySQL                                     |
 
 ## 3. High-level architecture
 
@@ -56,21 +57,21 @@ The app is multi-shop at the data-model level. `Shop` owns its settings and cust
 
 ## 4. Repository structure
 
-| Path | Purpose |
-| --- | --- |
-| `app/routes/` | Admin pages, public APIs, Hydrogen APIs, auth, and webhook handlers |
-| `app/services/` | Loyalty rules, settings, plan detection, errors, webhooks, and reward activity |
-| `prisma/schema.prisma` | MySQL data model |
-| `prisma/migrations/` | Production database migrations |
-| `extensions/loyalty-theme/` | Theme block and floating storefront widget |
-| `extensions/loyalty-checkout/` | Checkout UI extension |
-| `extensions/loyalty-account/` | Customer-account blocks and reward-history page |
-| `hydrogen-loyalty-storefront/` | Example Hydrogen storefront integration |
-| `examples/hydrogen/` | Reusable server-side Hydrogen client example |
-| `scripts/shopify-dev.mjs` | Shopify CLI wrapper that synchronizes development tunnel URLs |
-| `shopify.app.toml` | Development Shopify app configuration |
-| `shopify.app.production.toml` | Production Shopify app configuration |
-| `Dockerfile` | Production build and startup |
+| Path                           | Purpose                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------ |
+| `app/routes/`                  | Admin pages, public APIs, Hydrogen APIs, auth, and webhook handlers            |
+| `app/services/`                | Loyalty rules, settings, plan detection, errors, webhooks, and reward activity |
+| `prisma/schema.prisma`         | MySQL data model                                                               |
+| `prisma/migrations/`           | Production database migrations                                                 |
+| `extensions/loyalty-theme/`    | Theme block and floating storefront widget                                     |
+| `extensions/loyalty-checkout/` | Checkout UI extension                                                          |
+| `extensions/loyalty-account/`  | Customer-account blocks and reward-history page                                |
+| `hydrogen-loyalty-storefront/` | Example Hydrogen storefront integration                                        |
+| `examples/hydrogen/`           | Reusable server-side Hydrogen client example                                   |
+| `scripts/shopify-dev.mjs`      | Shopify CLI wrapper that synchronizes development tunnel URLs                  |
+| `shopify.app.toml`             | Development Shopify app configuration                                          |
+| `shopify.app.production.toml`  | Production Shopify app configuration                                           |
+| `Dockerfile`                   | Production build and startup                                                   |
 
 ## 5. Installation and local development
 
@@ -138,23 +139,23 @@ The install flow does not create sample customers, transactions, or activity rec
 
 ### Default earning configuration
 
-| Setting | Default |
-| --- | ---: |
-| Signup bonus | 100 points |
-| Order threshold | 100 currency units |
-| Points per order threshold | 10 points |
-| Refund threshold | 100 currency units |
-| Points deducted per refund threshold | 10 points |
-| Redemption enabled | Yes |
-| Checkout reward display limit | 10 |
+| Setting                              |            Default |
+| ------------------------------------ | -----------------: |
+| Signup bonus                         |         100 points |
+| Order threshold                      | 100 currency units |
+| Points per order threshold           |          10 points |
+| Refund threshold                     | 100 currency units |
+| Points deducted per refund threshold |          10 points |
+| Redemption enabled                   |                Yes |
+| Checkout reward display limit        |                 10 |
 
 ### Default discount rewards
 
 | Points | Discount value |
-| ---: | ---: |
-| 100 | 2 |
-| 250 | 5 |
-| 500 | 10 |
+| -----: | -------------: |
+|    100 |              2 |
+|    250 |              5 |
+|    500 |             10 |
 
 The code also defines a default `$15` gift card at 1,500 points and a store-credit conversion of 100 points to 1 currency unit for surfaces that support those reward types.
 
@@ -331,13 +332,14 @@ Reusable integration code lives in `hydrogen-loyalty-storefront/app/lib/loyalty.
 
 ### Public/storefront endpoints
 
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| GET/POST | `/api/loyalty-balance` | Balance, reward options, settings, and surface data |
-| POST | `/api/redeem-points` | Create/release a reward |
-| GET | `/api/customer-reward-history` | Customer reward activity |
-| GET | `/api/loyalty-program` | Public earning and redemption configuration |
-| GET | `/api/loyalty-iframe` | Render the loyalty iframe |
+| Method   | Endpoint                       | Purpose                                             |
+| -------- | ------------------------------ | --------------------------------------------------- |
+| GET/POST | `/api/loyalty-balance`         | Balance, reward options, settings, and surface data |
+| POST     | `/api/redeem-points`           | Create/release a reward                             |
+| GET      | `/api/customer-reward-history` | Customer reward activity                            |
+| GET      | `/api/loyalty-program`         | Public earning and redemption configuration         |
+| GET      | `/api/loyalty-iframe`          | Render the loyalty iframe                           |
+| GET/POST | `/api/points-expiry`           | Run the protected points-expiry worker              |
 
 Typical balance request:
 
@@ -362,11 +364,11 @@ Supported `rewardType` values are `discount`, `gift_card`, and `store_credit` wh
 
 ### Protected Hydrogen endpoints
 
-| Method | Endpoint |
-| --- | --- |
-| GET/POST | `/api/hydrogen/loyalty-balance` |
-| POST | `/api/hydrogen/redeem-points` |
-| GET | `/api/hydrogen/customer-reward-history` |
+| Method   | Endpoint                                |
+| -------- | --------------------------------------- |
+| GET/POST | `/api/hydrogen/loyalty-balance`         |
+| POST     | `/api/hydrogen/redeem-points`           |
+| GET      | `/api/hydrogen/customer-reward-history` |
 
 Send:
 
@@ -376,31 +378,53 @@ Authorization: Bearer YOUR_HYDROGEN_LOYALTY_API_TOKEN
 
 The protected routes return `401` for an invalid token and `503` when the server token is not configured.
 
+### Points expiry worker
+
+Points expiry is opt-in per shop. Each credit transaction receives a fixed
+deadline based on the configured number of days or calendar months. Debits
+consume the oldest available earning batches first. Expiry writes an
+idempotent `expiry` point transaction and a `points_expired` activity log.
+
+Balance, redemption, and customer-history requests process expiry lazily for
+the active customer. To process inactive customers, schedule a daily request:
+
+```http
+POST /api/points-expiry
+Authorization: Bearer YOUR_POINTS_EXPIRY_SECRET
+Content-Type: application/json
+
+{"batchSize": 100}
+```
+
+Set `POINTS_EXPIRY_SECRET` to a dedicated random production secret. The route
+returns `503` until it is configured. Repeated or overlapping runs are safe:
+each earning batch has a unique expiry idempotency key.
+
 ## 13. Webhooks
 
-| Topic | Route | Behavior |
-| --- | --- | --- |
-| `customers/create` | `/webhooks/customers/create` | Enroll customer and add signup points |
-| `orders/create` | `/webhooks/orders/create` | Award order points with duplicate protection |
-| `orders/paid` | `/webhooks/orders/paid` | Award points and settle pending discounts/gift cards |
-| `refunds/create` | `/webhooks/refunds/create` | Deduct refund points and return eligible redeemed-discount points |
-| `app/uninstalled` | `/webhooks/app/uninstalled` | Remove the shop record |
-| `app/scopes_update` | `/webhooks/app/scopes_update` | Update stored session scope |
+| Topic               | Route                         | Behavior                                                          |
+| ------------------- | ----------------------------- | ----------------------------------------------------------------- |
+| `customers/create`  | `/webhooks/customers/create`  | Enroll customer and add signup points                             |
+| `orders/create`     | `/webhooks/orders/create`     | Award order points with duplicate protection                      |
+| `orders/paid`       | `/webhooks/orders/paid`       | Award points and settle pending discounts/gift cards              |
+| `refunds/create`    | `/webhooks/refunds/create`    | Deduct refund points and return eligible redeemed-discount points |
+| `app/uninstalled`   | `/webhooks/app/uninstalled`   | Remove the shop record                                            |
+| `app/scopes_update` | `/webhooks/app/scopes_update` | Update stored session scope                                       |
 
 Webhook requests are authenticated with Shopify HMAC through `authenticate.webhook`. `orders/paid` payloads are also stored in `WebhookLog` for processing visibility.
 
 ## 14. Database model
 
-| Model | Responsibility |
-| --- | --- |
-| `Session` | Shopify offline/online sessions and access tokens |
-| `Shop` | Merchant identity and Shopify plan capabilities |
-| `LoyaltySetting` | Earning rules, reward configuration, and editable surface copy/appearance |
-| `Customer` | Shop-scoped Shopify customer and current point balance |
-| `PointTransaction` | Point credit/debit audit trail |
-| `Reward` | Generated discount, gift card, or store-credit reward and lifecycle state |
-| `RewardActivityLog` | Merchant/customer-facing reward timeline |
-| `WebhookLog` | Stored webhook payload and processing status |
+| Model               | Responsibility                                                            |
+| ------------------- | ------------------------------------------------------------------------- |
+| `Session`           | Shopify offline/online sessions and access tokens                         |
+| `Shop`              | Merchant identity and Shopify plan capabilities                           |
+| `LoyaltySetting`    | Earning rules, reward configuration, and editable surface copy/appearance |
+| `Customer`          | Shop-scoped Shopify customer and current point balance                    |
+| `PointTransaction`  | Point credit/debit audit trail                                            |
+| `Reward`            | Generated discount, gift card, or store-credit reward and lifecycle state |
+| `RewardActivityLog` | Merchant/customer-facing reward timeline                                  |
+| `WebhookLog`        | Stored webhook payload and processing status                              |
 
 Important uniqueness rules:
 
@@ -471,6 +495,7 @@ SHOPIFY_APP_URL="https://your-production-domain"
 SCOPES="..."
 NODE_ENV="production"
 HYDROGEN_LOYALTY_API_TOKEN="..." # when Hydrogen APIs are used
+POINTS_EXPIRY_SECRET="..." # required for the automated expiry worker
 ```
 
 For Railway, leave the custom Start Command empty so Docker uses:

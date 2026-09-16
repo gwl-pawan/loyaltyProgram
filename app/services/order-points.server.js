@@ -40,6 +40,122 @@ function getOrderDate(payload) {
   return date && !Number.isNaN(date.getTime()) ? date : new Date();
 }
 
+function getLatestDate(currentValue, nextValue) {
+  const currentDate = currentValue ? new Date(currentValue) : null;
+  const nextDate = nextValue ? new Date(nextValue) : null;
+
+  if (!nextDate || Number.isNaN(nextDate.getTime())) {
+    return currentDate || null;
+  }
+
+  if (!currentDate || Number.isNaN(currentDate.getTime())) {
+    return nextDate;
+  }
+
+  return nextDate > currentDate ? nextDate : currentDate;
+}
+
+function isUniqueConstraintError(error) {
+  return error?.code === "P2002";
+}
+
+async function updateCustomerActivity(
+  tx,
+  customerId,
+  activityDate,
+  fields = {},
+) {
+  const customer = await tx.customer.findUnique({
+    where: {
+      id: customerId,
+    },
+    select: {
+      lastActivityAt: true,
+      lastOrderAt: true,
+    },
+  });
+
+  if (!customer) {
+    return null;
+  }
+
+  return tx.customer.update({
+    where: {
+      id: customerId,
+    },
+    data: {
+      ...fields,
+      lastActivityAt: getLatestDate(customer.lastActivityAt, activityDate),
+      ...(fields.lastOrderAt
+        ? {
+            lastOrderAt: getLatestDate(
+              customer.lastOrderAt,
+              fields.lastOrderAt,
+            ),
+          }
+        : {}),
+    },
+  });
+}
+
+async function trackPaidOrderMetrics(
+  customerId,
+  orderId,
+  orderTotal,
+  orderDate,
+) {
+  const normalizedOrderId = String(orderId || "").trim();
+  const normalizedOrderTotal = Math.max(Number(orderTotal) || 0, 0);
+
+  if (!normalizedOrderId) {
+    await prisma.$transaction((tx) =>
+      updateCustomerActivity(tx, customerId, orderDate, {
+        lastOrderAt: orderDate,
+      }),
+    );
+    return {
+      tracked: false,
+      message: "Order metrics skipped because order ID was missing",
+    };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.customerOrderMetric.create({
+        data: {
+          customerId,
+          shopifyOrderId: normalizedOrderId,
+          orderTotal: normalizedOrderTotal,
+          orderedAt: orderDate,
+        },
+      });
+
+      await updateCustomerActivity(tx, customerId, orderDate, {
+        lifetimeSpend: {
+          increment: normalizedOrderTotal,
+        },
+        orderCount: {
+          increment: 1,
+        },
+        lastOrderAt: orderDate,
+      });
+    });
+
+    return {
+      tracked: true,
+    };
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      return {
+        tracked: false,
+        message: "Order metrics already tracked",
+      };
+    }
+
+    throw error;
+  }
+}
+
 function getDiscountCodes(payload) {
   const codes = new Set();
   const addCode = (code) => {
@@ -82,7 +198,9 @@ function getCustomerName(customerData) {
 }
 
 function getGiftCardPayments(payload) {
-  const giftCards = Array.isArray(payload?.gift_cards) ? payload.gift_cards : [];
+  const giftCards = Array.isArray(payload?.gift_cards)
+    ? payload.gift_cards
+    : [];
 
   if (giftCards.length > 0) {
     return giftCards.map((card) => ({
@@ -127,7 +245,9 @@ function getGiftCardPayments(payload) {
 
   const paymentDetails = payload?.payment_details;
   if (paymentDetails && typeof paymentDetails === "object") {
-    const company = String(paymentDetails.credit_card_company || "").toLowerCase();
+    const company = String(
+      paymentDetails.credit_card_company || "",
+    ).toLowerCase();
     if (company.includes("gift")) {
       return [
         {
@@ -145,7 +265,9 @@ function getGiftCardPayments(payload) {
 
   if (
     paymentGatewayNames.some((name) =>
-      String(name || "").toLowerCase().includes("gift"),
+      String(name || "")
+        .toLowerCase()
+        .includes("gift"),
     )
   ) {
     return [
@@ -168,10 +290,13 @@ function findRecentGiftCardReward(candidateRewards, matchedIds, orderDate) {
         return false;
       }
 
-      const ageMs = orderDate.getTime() - new Date(candidate.createdAt).getTime();
+      const ageMs =
+        orderDate.getTime() - new Date(candidate.createdAt).getTime();
       return ageMs >= 0 && ageMs <= GENERIC_GIFT_CARD_MATCH_WINDOW_MS;
     })
-    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))[0];
+    .sort(
+      (left, right) => new Date(right.createdAt) - new Date(left.createdAt),
+    )[0];
 }
 
 export async function addOrderRewardPoints(shopDomain, payload) {
@@ -214,6 +339,13 @@ export async function addOrderRewardPoints(shopDomain, payload) {
     });
   }
 
+  await trackPaidOrderMetrics(
+    customer.id,
+    orderId,
+    orderTotal,
+    getOrderDate(payload),
+  );
+
   if (orderId) {
     const existingTransaction = await prisma.pointTransaction.findFirst({
       where: {
@@ -248,12 +380,13 @@ export async function addOrderRewardPoints(shopDomain, payload) {
       where: {
         id: customer.id,
       },
-      data: {
-        loyaltyPoints: {
-          increment: points,
+        data: {
+          loyaltyPoints: {
+            increment: points,
+          },
+          lastActivityAt: new Date(),
         },
-      },
-    });
+      });
 
     await tx.pointTransaction.create({
       data: {
@@ -278,6 +411,9 @@ export async function addOrderRewardPoints(shopDomain, payload) {
 export async function settleOrderRedemptions(shopDomain, payload) {
   const orderId = getOrderId(payload);
   const orderName = getOrderName(payload);
+  const orderTotal = getOrderTotal(payload);
+  const currencyCode =
+    payload?.currency || payload?.presentment_currency || null;
   const discountCodes = getDiscountCodes(payload);
 
   await expirePendingDiscountRedemptions();
@@ -361,6 +497,7 @@ export async function settleOrderRedemptions(shopDomain, payload) {
             loyaltyPoints: {
               decrement: reward.pointsUsed,
             },
+            lastActivityAt: appliedAt,
           },
         });
 
@@ -382,6 +519,8 @@ export async function settleOrderRedemptions(shopDomain, payload) {
           metadata: {
             orderId,
             orderName,
+            orderTotal,
+            currencyCode,
             pointsUsed: reward.pointsUsed,
             discountAmount: reward.discountAmount,
             appliedAt,
@@ -422,6 +561,9 @@ export async function settleOrderRedemptions(shopDomain, payload) {
 export async function settleGiftCardRedemptions(shopDomain, payload) {
   const orderId = getOrderId(payload);
   const orderName = getOrderName(payload);
+  const orderTotal = getOrderTotal(payload);
+  const currencyCode =
+    payload?.currency || payload?.presentment_currency || null;
   const orderDate = getOrderDate(payload);
   const customerData = payload?.customer;
   const giftCardPayments = getGiftCardPayments(payload);
@@ -534,11 +676,17 @@ export async function settleGiftCardRedemptions(shopDomain, payload) {
     }
 
     if (!reward && payment.genericGatewayOnly) {
-      reward = findRecentGiftCardReward(candidateRewards, matchedIds, orderDate);
+      reward = findRecentGiftCardReward(
+        candidateRewards,
+        matchedIds,
+        orderDate,
+      );
     }
 
     if (!reward && candidateRewards.length - matchedIds.size === 1) {
-      reward = candidateRewards.find((candidate) => !matchedIds.has(candidate.id));
+      reward = candidateRewards.find(
+        (candidate) => !matchedIds.has(candidate.id),
+      );
     }
 
     if (!reward) {
@@ -583,6 +731,7 @@ export async function settleGiftCardRedemptions(shopDomain, payload) {
             loyaltyPoints: {
               decrement: reward.pointsUsed,
             },
+            lastActivityAt: appliedAt,
           },
         });
 
@@ -605,6 +754,8 @@ export async function settleGiftCardRedemptions(shopDomain, payload) {
           metadata: {
             orderId,
             orderName,
+            orderTotal,
+            currencyCode,
             amount: reward.discountAmount,
             pointsUsed: reward.pointsUsed,
             appliedAt: appliedAt.toISOString(),

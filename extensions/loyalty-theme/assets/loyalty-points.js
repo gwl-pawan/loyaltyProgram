@@ -106,6 +106,77 @@
     return data;
   }
 
+  async function captureReferral(widget) {
+    const dataset = widget.dataset;
+    const storageKey = `loyalty-referral:${dataset.shopDomain}`;
+    const code = new URL(window.location.href).searchParams.get("ref");
+    let visit;
+
+    try {
+      visit = JSON.parse(window.localStorage.getItem(storageKey) || "null");
+    } catch {
+      visit = null;
+    }
+
+    if (code && !visit) {
+      visit = {
+        code,
+        visitorToken: window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+      };
+      window.localStorage.setItem(storageKey, JSON.stringify(visit));
+    }
+
+    if (!visit?.visitorToken) return;
+    const endpoint = `${(dataset.apiBaseUrl || "/apps/loyalty-points").replace(/\/$/, "")}/api/referrals`;
+
+    try {
+      if (code) {
+        await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "track", shop: dataset.shopDomain, code: visit.code, visitorToken: visit.visitorToken, landingUrl: window.location.href }),
+        });
+      }
+
+      if (dataset.customerId) {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "claim", shop: dataset.shopDomain, customerId: dataset.customerId, visitorToken: visit.visitorToken }),
+        });
+        const result = await readJsonResponse(response, "Could not claim referral");
+        if (result.claimed) window.localStorage.removeItem(storageKey);
+      }
+    } catch (error) {
+      console.warn("[loyalty-points] Could not capture referral", error);
+    }
+  }
+
+  async function loadReferralProfile(widget) {
+    const dataset = widget.dataset;
+    const container = widget.querySelector("[data-loyalty-referral-profile]");
+    if (!container || !dataset.customerId || container.dataset.loaded === "true") return;
+
+    try {
+      const params = new URLSearchParams({ shop: dataset.shopDomain, customerId: dataset.customerId });
+      const endpoint = `${(dataset.apiBaseUrl || "/apps/loyalty-points").replace(/\/$/, "")}/api/referrals?${params}`;
+      const response = await fetch(endpoint);
+      const data = await readJsonResponse(response, "Could not load referral link");
+      if (!data.referral?.enabled) return;
+
+      const link = container.querySelector("[data-loyalty-referral-link]");
+      const copy = container.querySelector("[data-loyalty-referral-copy]");
+      const stats = container.querySelector("[data-loyalty-referral-stats]");
+      link.value = data.referral.link;
+      copy.textContent = `Share your link. You earn ${data.referral.advocatePoints} points and your friend earns ${data.referral.friendPoints} points after their first order.`;
+      stats.textContent = `${data.referral.successfulReferrals} successful referrals`;
+      container.hidden = false;
+      container.dataset.loaded = "true";
+    } catch (error) {
+      console.warn("[loyalty-points] Could not load referral profile", error);
+    }
+  }
+
   function applyCustomCss(css) {
     const customCss = String(css || "").trim();
     let style = document.getElementById("loyalty-points-widget-custom-css");
@@ -1172,6 +1243,8 @@
   }
 
   function initializeWidget(widget) {
+    captureReferral(widget);
+    loadReferralProfile(widget);
     mountFloatingElement(widget);
 
     if (widget.dataset.loyaltyReady === "true") return;
@@ -1318,6 +1391,15 @@
   document.addEventListener(
     "click",
     (event) => {
+      const copyReferral = event.target.closest("[data-loyalty-copy-referral]");
+      if (copyReferral) {
+        const input = copyReferral.parentElement?.querySelector("[data-loyalty-referral-link]");
+        if (input?.value) {
+          navigator.clipboard?.writeText(input.value);
+          copyReferral.textContent = "Copied";
+        }
+        return;
+      }
       const toggle = event.target.closest("[data-loyalty-toggle]");
       const closeButton = event.target.closest("[data-loyalty-close]");
       const control = toggle || closeButton;

@@ -26,6 +26,8 @@ import {
   runShopifyGraphql,
 } from "../services/errors.server";
 import { normalizeCheckoutReward } from "../services/checkout-reward";
+import { getCustomerStoreCreditSnapshot } from "../services/store-credit.server";
+import { tryExpireCustomerPoints } from "../services/points-expiry.server";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -143,61 +145,6 @@ function getRewardRuleContextFromUrl(url) {
     productIds,
     collectionIds,
   };
-}
-
-async function getStoreCreditBalance(shopDomain, shopifyCustomerId) {
-  if (!shopDomain || !shopifyCustomerId) {
-    return null;
-  }
-
-  try {
-    const { admin } = await unauthenticated.admin(shopDomain);
-    const data = await runShopifyGraphql(
-      admin,
-      `#graphql
-        query CustomerStoreCreditBalance($id: ID!) {
-          customer(id: $id) {
-            storeCreditAccounts(first: 10) {
-              nodes {
-                balance {
-                  amount
-                  currencyCode
-                }
-              }
-            }
-          }
-        }
-      `,
-      {
-        variables: {
-          id: `gid://shopify/Customer/${shopifyCustomerId}`,
-        },
-        operation: "Load Shopify store credit balance",
-      },
-    );
-
-    const balances =
-      data.customer?.storeCreditAccounts?.nodes
-        ?.map((account) => account.balance)
-        .filter(Boolean) || [];
-
-    if (balances.length === 0) {
-      return { amount: 0, currencyCode: null };
-    }
-
-    const currencyCode = balances[0].currencyCode;
-    const amount = balances
-      .filter((balance) => balance.currencyCode === currencyCode)
-      .reduce((total, balance) => total + Number(balance.amount || 0), 0);
-
-    return { amount, currencyCode };
-  } catch (error) {
-    logError("loyalty-balance:store-credit", error, {
-      shopDomain,
-      shopifyCustomerId,
-    });
-    return null;
-  }
 }
 
 async function getShopCurrencyCode(shopDomain) {
@@ -574,6 +521,11 @@ async function getLoyaltyBalance(customerId, shop, surface, ruleContext) {
       ...textSettings,
     });
   }
+  const expiryResult = await tryExpireCustomerPoints(customer.id);
+
+  if (expiryResult) {
+    customer.loyaltyPoints = expiryResult.balance;
+  }
   const rewardOptions =
     getRewardOptionsForPreference(
       customer.shop?.loyaltySetting?.redemptionRewards,
@@ -599,10 +551,13 @@ async function getLoyaltyBalance(customerId, shop, surface, ruleContext) {
   const storeCreditReward = getEnabledStoreCreditReward(
     customer.shop?.loyaltySetting,
   );
-  const storeCreditBalance = await getStoreCreditBalance(
-    customer.shop?.shopDomain || shopDomain,
-    shopifyCustomerId,
-  );
+  const storeCreditSnapshot = await getCustomerStoreCreditSnapshot({
+    shopDomain: customer.shop?.shopDomain || shopDomain,
+    customerId: shopifyCustomerId,
+    preferredCurrencyCode: currencyCode,
+    includeTransactions: surface === "account",
+    operation: "Load loyalty balance and store credit history",
+  });
   const pendingCheckoutRedemption = ["checkout", "theme"].includes(surface)
     ? normalizeCheckoutReward(await getPendingCheckoutRedemption(customer.id))
     : null;
@@ -616,7 +571,9 @@ async function getLoyaltyBalance(customerId, shop, surface, ruleContext) {
     pendingCheckoutRedemption,
     hasPendingCheckoutRedemption: Boolean(pendingCheckoutRedemption),
     storeCreditReward,
-    storeCreditBalance,
+    storeCreditBalance: storeCreditSnapshot?.balance || null,
+    storeCreditAccounts: storeCreditSnapshot?.accounts || [],
+    storeCreditHistory: storeCreditSnapshot?.transactions || [],
     checkoutRedemptionEnabled: rewardsRedemptionEnabled,
     checkoutIntegrationEnabled: checkoutRedemptionEnabled,
     effectiveIntegration,

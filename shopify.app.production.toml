@@ -37,7 +37,7 @@ api_version = "2026-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_customers,write_customers,read_orders,read_products,read_store_credit_accounts,write_discounts,write_gift_cards,write_store_credit_account_transactions"
+scopes = "read_customers,write_customers,read_orders,read_products,read_store_credit_accounts,read_store_credit_account_transactions,write_discounts,write_gift_cards,write_store_credit_account_transactions"
 
 [auth]
 redirect_urls = [ "https://loyalty-program-production-8f40.up.railway.app/auth/callback" ]

@@ -11,6 +11,7 @@ export const REWARD_ACTIVITY_TYPES = {
   STORE_CREDIT_CREATED: "store_credit_created",
   STORE_CREDIT_FAILED: "store_credit_failed",
   POINTS_REFUNDED: "points_refunded",
+  POINTS_EXPIRED: "points_expired",
 };
 
 export async function createRewardActivityLog(

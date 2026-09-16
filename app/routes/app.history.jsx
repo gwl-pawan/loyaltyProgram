@@ -12,7 +12,10 @@ const activityLabels = {
   gift_card_created: "Gift card created",
   gift_card_applied: "Gift card applied",
   gift_card_failed: "Gift card failed",
+  store_credit_created: "Store credit added",
+  store_credit_failed: "Store credit failed",
   points_refunded: "Points refunded",
+  points_expired: "Points expired",
 };
 
 const statusTone = {
@@ -23,7 +26,10 @@ const statusTone = {
   gift_card_created: "info",
   gift_card_applied: "success",
   gift_card_failed: "critical",
+  store_credit_created: "success",
+  store_credit_failed: "critical",
   points_refunded: "success",
+  points_expired: "warning",
 };
 
 const emptyTotals = {
@@ -35,7 +41,10 @@ const emptyTotals = {
   giftCardCreated: 0,
   giftCardApplied: 0,
   giftCardFailed: 0,
+  storeCreditCreated: 0,
+  storeCreditFailed: 0,
   refunded: 0,
+  pointsExpired: 0,
 };
 
 function getActivityLabel(activityType) {
@@ -43,6 +52,10 @@ function getActivityLabel(activityType) {
 }
 
 function getRewardType(item) {
+  if (["points_refunded", "points_expired"].includes(item.activityType)) {
+    return "points";
+  }
+
   return (
     item.reward?.rewardType ||
     getMetadataValue(item.metadata, "rewardType") ||
@@ -59,6 +72,7 @@ function getRewardTypeLabel(item) {
 
   if (rewardType === "store_credit") return "Store credit";
   if (rewardType === "gift_card") return "Gift card";
+  if (rewardType === "points") return "Points";
   return "Discount";
 }
 
@@ -248,10 +262,19 @@ export const loader = async ({ request }) => {
       if (item.activityType === "discount_applied") counts.applied += 1;
       if (item.activityType === "discount_expired") counts.expired += 1;
       if (item.activityType === "discount_failed") counts.failed += 1;
-      if (item.activityType === "gift_card_created") counts.giftCardCreated += 1;
-      if (item.activityType === "gift_card_applied") counts.giftCardApplied += 1;
+      if (item.activityType === "gift_card_created")
+        counts.giftCardCreated += 1;
+      if (item.activityType === "gift_card_applied")
+        counts.giftCardApplied += 1;
       if (item.activityType === "gift_card_failed") counts.giftCardFailed += 1;
+      if (item.activityType === "store_credit_created") {
+        counts.storeCreditCreated += 1;
+      }
+      if (item.activityType === "store_credit_failed") {
+        counts.storeCreditFailed += 1;
+      }
       if (item.activityType === "points_refunded") counts.refunded += 1;
+      if (item.activityType === "points_expired") counts.pointsExpired += 1;
 
       return counts;
     },
@@ -264,7 +287,10 @@ export const loader = async ({ request }) => {
       giftCardCreated: 0,
       giftCardApplied: 0,
       giftCardFailed: 0,
+      storeCreditCreated: 0,
+      storeCreditFailed: 0,
       refunded: 0,
+      pointsExpired: 0,
     },
   );
 
@@ -315,7 +341,10 @@ export default function HistoryPage() {
     ["Gift cards created", totals.giftCardCreated],
     ["Gift cards applied", totals.giftCardApplied],
     ["Gift card failures", totals.giftCardFailed],
+    ["Store credit added", totals.storeCreditCreated],
+    ["Store credit failures", totals.storeCreditFailed],
     ["Points refunded", totals.refunded],
+    ["Points expired", totals.pointsExpired],
   ];
 
   return (
@@ -359,6 +388,7 @@ export default function HistoryPage() {
                     <th>Reward code</th>
                     <th className="numeric">Points</th>
                     <th className="numeric">Amount</th>
+                    <th className="numeric">Balance after</th>
                     <th>Order</th>
                     <th>Message</th>
                     <th>Time</th>
@@ -375,10 +405,16 @@ export default function HistoryPage() {
                       item.reward?.pointsUsed ||
                       getMetadataValue(item.metadata, "pointsUsed") ||
                       getMetadataValue(item.metadata, "pointsRefunded") ||
+                      getMetadataValue(item.metadata, "pointsExpired") ||
                       getMetadataValue(item.metadata, "pointsToRedeem");
                     const discountAmount =
                       item.reward?.discountAmount ||
-                      getMetadataValue(item.metadata, "discountAmount");
+                      getMetadataValue(item.metadata, "discountAmount") ||
+                      getMetadataValue(item.metadata, "amount");
+                    const balanceAfterTransaction = getMetadataValue(
+                      item.metadata,
+                      "balanceAfterTransaction",
+                    );
                     const orderId = getOrderIdFromLog(item);
                     const orderName =
                       getMetadataValue(item.metadata, "orderName") ||
@@ -423,6 +459,11 @@ export default function HistoryPage() {
                         <td className="numeric">
                           {discountAmount
                             ? currencyFormatter.format(discountAmount)
+                            : "-"}
+                        </td>
+                        <td className="numeric">
+                          {balanceAfterTransaction !== null
+                            ? currencyFormatter.format(balanceAfterTransaction)
                             : "-"}
                         </td>
                         <td>

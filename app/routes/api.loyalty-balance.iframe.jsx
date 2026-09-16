@@ -10,6 +10,8 @@ import {
 import { isRewardsRedemptionEnabled } from "../services/shop-plan.server";
 import { logError, runShopifyGraphql } from "../services/errors.server";
 import { normalizeCheckoutReward } from "../services/checkout-reward";
+import { getCustomerStoreCreditSnapshot } from "../services/store-credit.server";
+import { tryExpireCustomerPoints } from "../services/points-expiry.server";
 
 const DEFAULT_IFRAME_COPY = {
   launcherLabel: "Rewards",
@@ -384,6 +386,7 @@ function getActivityLabel(activityType) {
     store_credit_created: "Store credit added",
     store_credit_failed: "Store credit failed",
     points_refunded: "Points refunded",
+    points_expired: "Points expired",
   };
 
   return labels[activityType] || activityType || "Activity";
@@ -398,7 +401,7 @@ function getRewardTypeLabel(activityType) {
     return "Store credit";
   }
 
-  if (activityType === "points_refunded") {
+  if (["points_refunded", "points_expired"].includes(activityType)) {
     return "Points";
   }
 
@@ -487,7 +490,7 @@ function normalizeStoreCreditReward(reward) {
 function formatHistoryAmount(value, currencyCode) {
   const amount = Number(value);
 
-  return Number.isFinite(amount) && amount > 0
+  return Number.isFinite(amount) && amount !== 0
     ? formatCurrency(amount, currencyCode)
     : "-";
 }
@@ -503,7 +506,10 @@ function getActivityTone(activityType) {
     return "critical";
   }
 
-  if (activityType?.includes("expired")) {
+  if (
+    activityType?.includes("expired") ||
+    activityType?.includes("expiration")
+  ) {
     return "warning";
   }
 
@@ -518,59 +524,15 @@ function getActivityTone(activityType) {
   return "neutral";
 }
 
-async function getStoreCreditBalance(shopDomain, shopifyCustomerId) {
-  if (!shopDomain || !shopifyCustomerId) {
-    return null;
-  }
-
-  try {
-    const { admin } = await unauthenticated.admin(shopDomain);
-    const data = await runShopifyGraphql(
-      admin,
-      `#graphql
-        query CustomerStoreCreditBalance($id: ID!) {
-          customer(id: $id) {
-            storeCreditAccounts(first: 10) {
-              nodes {
-                balance {
-                  amount
-                  currencyCode
-                }
-              }
-            }
-          }
-        }
-      `,
-      {
-        variables: {
-          id: `gid://shopify/Customer/${shopifyCustomerId}`,
-        },
-        operation: "Load iframe Shopify store credit balance",
-      },
-    );
-
-    const balances =
-      data.customer?.storeCreditAccounts?.nodes
-        ?.map((account) => account.balance)
-        .filter(Boolean) || [];
-
-    if (balances.length === 0) {
-      return { amount: 0, currencyCode: null };
-    }
-
-    const currencyCode = balances[0].currencyCode;
-    const amount = balances
-      .filter((balance) => balance.currencyCode === currencyCode)
-      .reduce((total, balance) => total + Number(balance.amount || 0), 0);
-
-    return { amount, currencyCode };
-  } catch (error) {
-    logError("loyalty-iframe:store-credit-balance", error, {
-      shopDomain,
-      shopifyCustomerId,
-    });
-    return null;
-  }
+function getStoreCreditTransactionLabel(type) {
+  return (
+    {
+      credit: "Store credit added",
+      debit: "Store credit used",
+      debit_revert: "Store credit returned",
+      expiration: "Store credit expired",
+    }[type] || "Store credit updated"
+  );
 }
 
 async function getShopCurrencyCode(shopDomain) {
@@ -759,7 +721,14 @@ async function loadWidgetData(
           },
         })
       : null;
-  const history =
+  const expiryResult = customer
+    ? await tryExpireCustomerPoints(customer.id)
+    : null;
+
+  if (customer && expiryResult) {
+    customer.loyaltyPoints = expiryResult.balance;
+  }
+  const rewardHistory =
     customer && surface === "account"
       ? await prisma.rewardActivityLog.findMany({
           where: {
@@ -786,15 +755,76 @@ async function loadWidgetData(
           ...(surface === "account" ? {} : { take: 8 }),
         })
       : [];
-  const storeCreditBalance =
+  const currencyCode = await getShopCurrencyCode(shopDomain);
+  const storeCreditSnapshot =
     surface === "account"
-      ? await getStoreCreditBalance(shopDomain, shopifyCustomerId)
+      ? await getCustomerStoreCreditSnapshot({
+          shopDomain,
+          customerId: shopifyCustomerId,
+          preferredCurrencyCode: currencyCode,
+          includeTransactions: true,
+          operation: "Load iframe store credit balance and history",
+        })
       : null;
   const pendingCheckoutRedemption =
     surface === "floating" && customer
       ? await getPendingCheckoutRedemption(customer.id)
       : null;
-  const currencyCode = await getShopCurrencyCode(shopDomain);
+  const storeCreditTransactionIds = new Set(
+    (storeCreditSnapshot?.transactions || []).map((item) => item.id),
+  );
+  const history = [
+    ...(storeCreditSnapshot?.transactions || []).map((item) => ({
+      id: item.id,
+      activityType: `store_credit_${item.type}`,
+      label: getStoreCreditTransactionLabel(item.type),
+      typeLabel: "Store credit",
+      message: `Balance after transaction: ${formatCurrency(
+        item.balanceAfterTransaction,
+        item.currencyCode || currencyCode,
+      )}`,
+      rewardCode: null,
+      createdAt: item.createdAt,
+      orderId: null,
+      orderName: null,
+      pointsUsed: null,
+      discountAmount: item.amount,
+    })),
+    ...rewardHistory
+      .filter(
+        (item) =>
+          !item.activityType?.startsWith("store_credit") ||
+          !storeCreditTransactionIds.has(item.rewardCode),
+      )
+      .map((item) => ({
+        id: item.id,
+        activityType: item.activityType,
+        label: getActivityLabel(item.activityType),
+        typeLabel: getRewardTypeLabel(item.activityType),
+        message: item.message,
+        rewardCode: item.rewardCode,
+        createdAt: item.createdAt,
+        orderId: ORDER_APPLIED_ACTIVITY_TYPES.has(item.activityType)
+          ? getMetadataValue(item.metadata, "orderId") ||
+            item.reward?.orderId ||
+            null
+          : null,
+        orderName: ORDER_APPLIED_ACTIVITY_TYPES.has(item.activityType)
+          ? getMetadataValue(item.metadata, "orderName") || null
+          : null,
+        pointsUsed:
+          item.reward?.pointsUsed ||
+          getMetadataValue(item.metadata, "pointsUsed") ||
+          getMetadataValue(item.metadata, "pointsExpired"),
+        discountAmount:
+          item.reward?.discountAmount ||
+          getMetadataValue(item.metadata, "discountAmount") ||
+          getMetadataValue(item.metadata, "amount"),
+      })),
+  ].sort(
+    (left, right) =>
+      new Date(right.createdAt || 0) - new Date(left.createdAt || 0),
+  );
 
   return {
     currencyCode,
@@ -803,34 +833,11 @@ async function loadWidgetData(
     pendingCheckoutRedemption: normalizeCheckoutReward(
       pendingCheckoutRedemption,
     ),
-    history: history.map((item) => ({
-      id: item.id,
-      activityType: item.activityType,
-      label: getActivityLabel(item.activityType),
-      typeLabel: getRewardTypeLabel(item.activityType),
-      message: item.message,
-      rewardCode: item.rewardCode,
-      createdAt: item.createdAt,
-      orderId: ORDER_APPLIED_ACTIVITY_TYPES.has(item.activityType)
-        ? getMetadataValue(item.metadata, "orderId") ||
-          item.reward?.orderId ||
-          null
-        : null,
-      orderName: ORDER_APPLIED_ACTIVITY_TYPES.has(item.activityType)
-        ? getMetadataValue(item.metadata, "orderName") || null
-        : null,
-      pointsUsed:
-        item.reward?.pointsUsed ||
-        getMetadataValue(item.metadata, "pointsUsed"),
-      discountAmount:
-        item.reward?.discountAmount ||
-        getMetadataValue(item.metadata, "discountAmount") ||
-        getMetadataValue(item.metadata, "amount"),
-    })),
+    history,
     redemptionEnabled: isRewardsRedemptionEnabled(settings),
     rewardOptions: surfaceRewardOptions,
     settings,
-    storeCreditBalance,
+    storeCreditBalance: storeCreditSnapshot?.balance || null,
     storeCreditReward,
   };
 }
@@ -2012,8 +2019,8 @@ function renderFloatingRewardItems(
           const pointsRemaining = Math.max(rewardPoints - points, 0);
           const isApplied = Boolean(
             normalizedPendingReward?.rewardCode &&
-              getRewardKey(reward) ===
-                `${normalizedPendingReward.rewardType}:${normalizedPendingReward.pointsUsed}`,
+            getRewardKey(reward) ===
+              `${normalizedPendingReward.rewardType}:${normalizedPendingReward.pointsUsed}`,
           );
           const cta = canRedeem
             ? isApplied
@@ -3131,11 +3138,7 @@ export const loader = async ({ request }) => {
     const loginUrl = getParam(url, "loginUrl", "/account/login");
     const registerUrl = getParam(url, "registerUrl", "/account/register");
     const redeemUrl = getParam(url, "redeemUrl", "/api/redeem-points");
-    const cartUpdateUrl = getParam(
-      url,
-      "cartUpdateUrl",
-      "/cart/update.js",
-    );
+    const cartUpdateUrl = getParam(url, "cartUpdateUrl", "/cart/update.js");
     const {
       customer,
       currencyCode: shopCurrencyCode,

@@ -62,10 +62,16 @@ type Pages = {
   "/api/loyalty-iframe": {
     params: {};
   };
+  "/api/points-expiry": {
+    params: {};
+  };
   "/api/redeem-points": {
     params: {};
   };
   "/api/test-order": {
+    params: {};
+  };
+  "/api/referrals": {
     params: {};
   };
   "/auth/login": {
@@ -96,7 +102,7 @@ type Pages = {
 type RouteFiles = {
   "root.jsx": {
     id: "root";
-    page: "/" | "/api/hydrogen/customer-reward-history" | "/api/hydrogen/loyalty-balance" | "/api/customer-reward-history" | "/api/hydrogen/redeem-points" | "/webhooks/app/scopes_update" | "/webhooks/customers/create" | "/webhooks/app/uninstalled" | "/webhooks/refunds/create" | "/webhooks/orders/create" | "/webhooks/orders/paid" | "/api/loyalty-balance" | "/api/loyalty-balance/api/customer-reward-history" | "/api/loyalty-balance/api/redeem-points" | "/api/loyalty-balance/iframe" | "/api/loyalty-program" | "/api/loyalty-iframe" | "/api/redeem-points" | "/api/test-order" | "/auth/login" | "/auth/*" | "/app" | "/app/additional" | "/app/customers" | "/app/settings" | "/app/history";
+    page: "/" | "/api/hydrogen/customer-reward-history" | "/api/hydrogen/loyalty-balance" | "/api/customer-reward-history" | "/api/hydrogen/redeem-points" | "/webhooks/app/scopes_update" | "/webhooks/customers/create" | "/webhooks/app/uninstalled" | "/webhooks/refunds/create" | "/webhooks/orders/create" | "/webhooks/orders/paid" | "/api/loyalty-balance" | "/api/loyalty-balance/api/customer-reward-history" | "/api/loyalty-balance/api/redeem-points" | "/api/loyalty-balance/iframe" | "/api/loyalty-program" | "/api/loyalty-iframe" | "/api/points-expiry" | "/api/redeem-points" | "/api/test-order" | "/api/referrals" | "/auth/login" | "/auth/*" | "/app" | "/app/additional" | "/app/customers" | "/app/settings" | "/app/history";
   };
   "routes/api.hydrogen.customer-reward-history.jsx": {
     id: "routes/api.hydrogen.customer-reward-history";
@@ -162,6 +168,10 @@ type RouteFiles = {
     id: "routes/api.loyalty-iframe";
     page: "/api/loyalty-iframe";
   };
+  "routes/api.points-expiry.jsx": {
+    id: "routes/api.points-expiry";
+    page: "/api/points-expiry";
+  };
   "routes/api.redeem-points.jsx": {
     id: "routes/api.redeem-points";
     page: "/api/redeem-points";
@@ -169,6 +179,10 @@ type RouteFiles = {
   "routes/api.test-order.jsx": {
     id: "routes/api.test-order";
     page: "/api/test-order";
+  };
+  "routes/api.referrals.jsx": {
+    id: "routes/api.referrals";
+    page: "/api/referrals";
   };
   "routes/auth.login/route.jsx": {
     id: "routes/auth.login";
@@ -226,8 +240,10 @@ type RouteModules = {
   "routes/api.loyalty-balance.iframe": typeof import("./app/routes/api.loyalty-balance.iframe.jsx");
   "routes/api.loyalty-program": typeof import("./app/routes/api.loyalty-program.jsx");
   "routes/api.loyalty-iframe": typeof import("./app/routes/api.loyalty-iframe.jsx");
+  "routes/api.points-expiry": typeof import("./app/routes/api.points-expiry.jsx");
   "routes/api.redeem-points": typeof import("./app/routes/api.redeem-points.jsx");
   "routes/api.test-order": typeof import("./app/routes/api.test-order.jsx");
+  "routes/api.referrals": typeof import("./app/routes/api.referrals.jsx");
   "routes/auth.login": typeof import("./app/routes/auth.login/route.jsx");
   "routes/_index": typeof import("./app/routes/_index/route.jsx");
   "routes/auth.$": typeof import("./app/routes/auth.$.jsx");

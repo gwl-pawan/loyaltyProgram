@@ -36,6 +36,7 @@ model Shop {
   createdAt            DateTime @default(now())
 
   customers      Customer[]
+  referrals      Referral[]
   loyaltySetting LoyaltySetting?
 }
 
@@ -44,16 +45,28 @@ model LoyaltySetting {
   shopId Int  @unique
   shop   Shop @relation(fields: [shopId], references: [id])
 
-  signupBonusPoints            Int     @default(100)
-  orderSpendAmount             Int     @default(100)
-  orderSpendPoints             Int     @default(10)
-  refundSpendAmount            Int     @default(100)
-  refundSpendPoints            Int     @default(10)
-  checkoutRedemptionEnabled    Boolean @default(true)
-  storeCreditRedemptionEnabled Boolean @default(true)
-  checkoutRewardLimit          Int     @default(10)
-  preferredIntegration         String  @default("theme")
-  redemptionRewards            String  @db.Text
+  signupBonusPoints            Int       @default(100)
+  orderSpendAmount             Int       @default(100)
+  orderSpendPoints             Int       @default(10)
+  refundSpendAmount            Int       @default(100)
+  refundSpendPoints            Int       @default(10)
+  checkoutRedemptionEnabled    Boolean   @default(true)
+  storeCreditRedemptionEnabled Boolean   @default(true)
+  checkoutRewardLimit          Int       @default(10)
+  preferredIntegration         String    @default("theme")
+  redemptionRewards            String    @db.Text
+  pointsExpiryEnabled          Boolean   @default(false)
+  pointsExpiryValue            Int       @default(12)
+  pointsExpiryUnit             String    @default("months")
+  pointsExpiryApplyToExisting  Boolean   @default(false)
+  pointsExpiryStartedAt        DateTime?
+  pointsExpiryLastRunAt        DateTime?
+  vipSpendThreshold            Float     @default(50000)
+  inactiveCustomerDays         Int       @default(90)
+  topSpenderPercent            Int       @default(10)
+  referralProgramEnabled       Boolean   @default(true)
+  referralAdvocatePoints       Int       @default(200)
+  referralFriendPoints         Int       @default(100)
 
   // Checkout UI Text Settings
   checkoutLoginMessage        String @db.Text
@@ -115,14 +128,90 @@ model Customer {
   shopifyCustomerId String
   name              String?
   email             String?
-  loyaltyPoints     Int      @default(0)
-  createdAt         DateTime @default(now())
+  loyaltyPoints     Int       @default(0)
+  lifetimeSpend     Float     @default(0)
+  orderCount        Int       @default(0)
+  lastOrderAt       DateTime?
+  lastActivityAt    DateTime?
+  createdAt         DateTime  @default(now())
 
   transactions       PointTransaction[]
   rewards            Reward[]
   rewardActivityLogs RewardActivityLog[]
+  orderMetrics       CustomerOrderMetric[]
+  refundMetrics      CustomerRefundMetric[]
+  referralsMade      Referral[]             @relation("ReferralAdvocate")
+  referredBy         Referral?              @relation("ReferralFriend")
+
+  referralCode String?
 
   @@unique([shopId, shopifyCustomerId])
+  @@unique([shopId, referralCode])
+  @@index([shopId, lifetimeSpend])
+  @@index([shopId, lastActivityAt])
+}
+
+model Referral {
+  id Int @id @default(autoincrement())
+
+  shopId Int
+  shop   Shop @relation(fields: [shopId], references: [id])
+
+  advocateCustomerId Int
+  advocateCustomer   Customer  @relation("ReferralAdvocate", fields: [advocateCustomerId], references: [id])
+  referredCustomerId Int?      @unique
+  referredCustomer   Customer? @relation("ReferralFriend", fields: [referredCustomerId], references: [id])
+
+  referralCode     String
+  visitorToken     String    @unique
+  status           String    @default("clicked")
+  landingUrl       String?   @db.Text
+  qualifiedOrderId String?
+  clickedAt        DateTime  @default(now())
+  claimedAt        DateTime?
+  qualifiedAt      DateTime?
+  rewardedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([shopId, visitorToken])
+  @@index([shopId, referralCode, status])
+  @@index([advocateCustomerId, createdAt])
+}
+
+model CustomerOrderMetric {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  shopifyOrderId String
+  orderTotal     Float
+  refundedTotal  Float     @default(0)
+  orderedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  refunds CustomerRefundMetric[]
+
+  @@unique([customerId, shopifyOrderId])
+  @@index([customerId, orderedAt])
+}
+
+model CustomerRefundMetric {
+  id                    Int                  @id @default(autoincrement())
+  customerId            Int
+  customer              Customer             @relation(fields: [customerId], references: [id])
+  customerOrderMetricId Int?
+  customerOrderMetric   CustomerOrderMetric? @relation(fields: [customerOrderMetricId], references: [id])
+
+  shopifyRefundId String
+  refundAmount    Float
+  refundedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@unique([customerId, shopifyRefundId])
+  @@index([customerOrderMetricId])
+  @@index([customerId, refundedAt])
 }
 
 model PointTransaction {
@@ -130,10 +219,18 @@ model PointTransaction {
   customerId Int
   customer   Customer @relation(fields: [customerId], references: [id])
 
-  points          Int
-  transactionType String
-  reason          String?
-  createdAt       DateTime @default(now())
+  points              Int
+  transactionType     String
+  reason              String?
+  expiresAt           DateTime?
+  expiredAt           DateTime?
+  sourceTransactionId Int?
+  idempotencyKey      String?   @unique
+  createdAt           DateTime  @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([transactionType, expiresAt])
+  @@index([sourceTransactionId])
 }
 
 model Reward {

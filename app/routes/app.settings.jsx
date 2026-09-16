@@ -70,6 +70,20 @@ const SETTING_FIELDS = [
     description:
       "Points deducted from customers for each refund threshold they reach.",
   },
+  {
+    name: "referralAdvocatePoints",
+    label: "Referrer reward",
+    suffix: "points",
+    help: "Credit after the referred customer's first paid order.",
+    description: "Points awarded to the customer who shared the referral link.",
+  },
+  {
+    name: "referralFriendPoints",
+    label: "Friend reward",
+    suffix: "points",
+    help: "Credit after the referred customer's first paid order.",
+    description: "Points awarded to the new customer who used the referral link.",
+  },
 ];
 
 const RULE_GROUPS = [
@@ -87,6 +101,42 @@ const RULE_GROUPS = [
     title: "Refunds",
     description: "Points removed when refunded spend should reverse rewards.",
     fields: ["refundSpendAmount", "refundSpendPoints"],
+  },
+  {
+    title: "Referrals",
+    description: "Reward both customers after a referred friend's first paid order.",
+    fields: ["referralAdvocatePoints", "referralFriendPoints"],
+  },
+];
+
+const SEGMENTATION_FIELDS = [
+  {
+    name: "vipSpendThreshold",
+    label: "VIP spend threshold",
+    min: "0",
+    step: "0.01",
+    inputMode: "decimal",
+    details: "Customers at or above this lifetime spend are marked as VIP.",
+  },
+  {
+    name: "inactiveCustomerDays",
+    label: "Inactive after",
+    min: "1",
+    max: "3650",
+    step: "1",
+    inputMode: "numeric",
+    suffix: "days",
+    details: "Customers with no order or loyalty activity for this many days.",
+  },
+  {
+    name: "topSpenderPercent",
+    label: "Top spender percentage",
+    min: "1",
+    max: "100",
+    step: "1",
+    inputMode: "numeric",
+    suffix: "%",
+    details: "Marks the highest-spending customers by lifetime net spend.",
   },
 ];
 
@@ -522,6 +572,26 @@ function parseCheckoutRewardLimit(formData) {
   const value = Number(formData.get("checkoutRewardLimit"));
 
   if (!Number.isInteger(value) || value < 1 || value > 20) {
+    return null;
+  }
+
+  return value;
+}
+
+function parseNonNegativeAmount(formData, fieldName) {
+  const value = Number(formData.get(fieldName));
+
+  if (!Number.isFinite(value) || value < 0) {
+    return null;
+  }
+
+  return value;
+}
+
+function parseBoundedInteger(formData, fieldName, min, max) {
+  const value = Number(formData.get(fieldName));
+
+  if (!Number.isInteger(value) || value < min || value > max) {
     return null;
   }
 
@@ -1412,123 +1482,129 @@ function RewardTierOptions({
 
       {enabled ? (
         <>
-      <div className="summary-strip">
-        <div>
-          <span>Configured tiers</span>
-          <strong>{formatNumber(activeRewardCount)}</strong>
-        </div>
-        <div>
-          <span>Best value</span>
-          <strong>
-            {rewardSummary.bestValueReward
-              ? `${formatNumber(rewardSummary.bestValueReward.points)} points`
-              : "Pending"}
-          </strong>
-          <small>
-            {rewardSummary.bestValueReward
-              ? `${rewardSummary.bestValueReward.amount} ${config.valueLabel}`
-              : "Complete a tier"}
-          </small>
-        </div>
-        <div>
-          <span>{config.amountSummaryLabel}</span>
-          <strong>
-            {formatCurrency(rewardSummary.totalRewardValue, currencyCode)}
-          </strong>
-        </div>
-      </div>
+          <div className="summary-strip">
+            <div>
+              <span>Configured tiers</span>
+              <strong>{formatNumber(activeRewardCount)}</strong>
+            </div>
+            <div>
+              <span>Best value</span>
+              <strong>
+                {rewardSummary.bestValueReward
+                  ? `${formatNumber(rewardSummary.bestValueReward.points)} points`
+                  : "Pending"}
+              </strong>
+              <small>
+                {rewardSummary.bestValueReward
+                  ? `${rewardSummary.bestValueReward.amount} ${config.valueLabel}`
+                  : "Complete a tier"}
+              </small>
+            </div>
+            <div>
+              <span>{config.amountSummaryLabel}</span>
+              <strong>
+                {formatCurrency(rewardSummary.totalRewardValue, currencyCode)}
+              </strong>
+            </div>
+          </div>
 
-      <div className="reward-tier-grid">
-        {rewardRows.map((reward, index) => (
-          <div className="reward-tier-card" key={index}>
-            <s-stack gap="small">
-              <s-stack
-                direction="inline"
-                gap="base"
-                justifyContent="space-between"
-              >
-                <s-text type="strong">Reward {index + 1}</s-text>
-                {!config.singleRow ? (
-                  <s-button
-                    type="button"
-                    tone="critical"
-                    onClick={() => deleteRewardRow(index)}
+          <div className="reward-tier-grid">
+            {rewardRows.map((reward, index) => (
+              <div className="reward-tier-card" key={index}>
+                <s-stack gap="small">
+                  <s-stack
+                    direction="inline"
+                    gap="base"
+                    justifyContent="space-between"
                   >
-                    Remove
-                  </s-button>
-                ) : null}
-              </s-stack>
-              <s-number-field
-                label="Points required"
-                name={config.pointsName}
-                min="1"
-                step="1"
-                inputMode="numeric"
-                value={reward.points}
-                suffix="points"
-                onInput={(event) =>
-                  updateRewardRow(index, "points", event.target.value)
-                }
-                error={
-                  errors[`${config.pointsErrorPrefix}.${index}`] || undefined
-                }
-              ></s-number-field>
-              <s-number-field
-                label={config.amountLabel}
-                name={config.amountName}
-                min="0.01"
-                step="0.01"
-                inputMode="decimal"
-                value={reward[config.amountKey]}
-                onInput={(event) =>
-                  updateRewardRow(index, config.amountKey, event.target.value)
-                }
-                error={
-                  errors[`${config.amountErrorPrefix}.${index}`] || undefined
-                }
-              ></s-number-field>
-              {config.allowRules !== false ? (
-                <div className="reward-rule-fields">
+                    <s-text type="strong">Reward {index + 1}</s-text>
+                    {!config.singleRow ? (
+                      <s-button
+                        type="button"
+                        tone="critical"
+                        onClick={() => deleteRewardRow(index)}
+                      >
+                        Remove
+                      </s-button>
+                    ) : null}
+                  </s-stack>
                   <s-number-field
-                    label="Minimum cart spend"
-                    name={`${rewardType}RewardMinSpend`}
-                    min="0.01"
-                    step="0.01"
-                    inputMode="decimal"
-                    value={reward.minSpend || ""}
-                    details="Optional spend condition for this reward."
+                    label="Points required"
+                    name={config.pointsName}
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    value={reward.points}
+                    suffix="points"
                     onInput={(event) =>
-                      updateRewardRow(index, "minSpend", event.target.value)
+                      updateRewardRow(index, "points", event.target.value)
                     }
                     error={
-                      errors[`${rewardType}RewardMinSpend.${index}`] ||
+                      errors[`${config.pointsErrorPrefix}.${index}`] ||
                       undefined
                     }
                   ></s-number-field>
-                  <RewardResourcePicker
-                    label="Products"
-                    name={`${rewardType}RewardProducts`}
-                    resourceType="product"
-                    selectedResources={reward.products}
-                    onChange={(resources) =>
-                      updateRewardRow(index, "products", resources)
+                  <s-number-field
+                    label={config.amountLabel}
+                    name={config.amountName}
+                    min="0.01"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={reward[config.amountKey]}
+                    onInput={(event) =>
+                      updateRewardRow(
+                        index,
+                        config.amountKey,
+                        event.target.value,
+                      )
                     }
-                  />
-                  <RewardResourcePicker
-                    label="Collections"
-                    name={`${rewardType}RewardCollections`}
-                    resourceType="collection"
-                    selectedResources={reward.collections}
-                    onChange={(resources) =>
-                      updateRewardRow(index, "collections", resources)
+                    error={
+                      errors[`${config.amountErrorPrefix}.${index}`] ||
+                      undefined
                     }
-                  />
-                </div>
-              ) : null}
-            </s-stack>
+                  ></s-number-field>
+                  {config.allowRules !== false ? (
+                    <div className="reward-rule-fields">
+                      <s-number-field
+                        label="Minimum cart spend"
+                        name={`${rewardType}RewardMinSpend`}
+                        min="0.01"
+                        step="0.01"
+                        inputMode="decimal"
+                        value={reward.minSpend || ""}
+                        details="Optional spend condition for this reward."
+                        onInput={(event) =>
+                          updateRewardRow(index, "minSpend", event.target.value)
+                        }
+                        error={
+                          errors[`${rewardType}RewardMinSpend.${index}`] ||
+                          undefined
+                        }
+                      ></s-number-field>
+                      <RewardResourcePicker
+                        label="Products"
+                        name={`${rewardType}RewardProducts`}
+                        resourceType="product"
+                        selectedResources={reward.products}
+                        onChange={(resources) =>
+                          updateRewardRow(index, "products", resources)
+                        }
+                      />
+                      <RewardResourcePicker
+                        label="Collections"
+                        name={`${rewardType}RewardCollections`}
+                        resourceType="collection"
+                        selectedResources={reward.collections}
+                        onChange={(resources) =>
+                          updateRewardRow(index, "collections", resources)
+                        }
+                      />
+                    </div>
+                  ) : null}
+                </s-stack>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
         </>
       ) : null}
     </div>
@@ -1601,6 +1677,7 @@ export const action = async ({ request }) => {
   const errors = {};
   const {
     shop: planShop,
+    settings: existingSettings,
     checkoutAvailable,
     planSyncError,
   } = await ensurePlanAwareLoyaltySetup(session.shop, admin);
@@ -1664,6 +1741,74 @@ export const action = async ({ request }) => {
   values.storeCreditRedemptionEnabled = formData
     .getAll("storeCreditRedemptionEnabled")
     .includes("true");
+  values.pointsExpiryEnabled = formData
+    .getAll("pointsExpiryEnabled")
+    .includes("true");
+  values.pointsExpiryApplyToExisting = formData
+    .getAll("pointsExpiryApplyToExisting")
+    .includes("true");
+  if (existingSettings?.pointsExpiryStartedAt) {
+    values.pointsExpiryApplyToExisting =
+      existingSettings.pointsExpiryApplyToExisting;
+  }
+  values.pointsExpiryUnit = ["days", "months"].includes(
+    formData.get("pointsExpiryUnit"),
+  )
+    ? formData.get("pointsExpiryUnit")
+    : DEFAULT_LOYALTY_SETTINGS.pointsExpiryUnit;
+  const pointsExpiryValue = Number(formData.get("pointsExpiryValue"));
+  const pointsExpiryMaximum = values.pointsExpiryUnit === "days" ? 3650 : 120;
+
+  if (
+    !Number.isInteger(pointsExpiryValue) ||
+    pointsExpiryValue < 1 ||
+    pointsExpiryValue > pointsExpiryMaximum
+  ) {
+    errors.pointsExpiryValue = `Enter a whole number from 1 to ${pointsExpiryMaximum}.`;
+  } else {
+    values.pointsExpiryValue = pointsExpiryValue;
+  }
+
+  if (values.pointsExpiryEnabled) {
+    values.pointsExpiryStartedAt =
+      existingSettings?.pointsExpiryStartedAt || new Date();
+  }
+
+  const vipSpendThreshold = parseNonNegativeAmount(
+    formData,
+    "vipSpendThreshold",
+  );
+  const inactiveCustomerDays = parseBoundedInteger(
+    formData,
+    "inactiveCustomerDays",
+    1,
+    3650,
+  );
+  const topSpenderPercent = parseBoundedInteger(
+    formData,
+    "topSpenderPercent",
+    1,
+    100,
+  );
+
+  if (vipSpendThreshold === null) {
+    errors.vipSpendThreshold = "Enter a spend amount of 0 or more.";
+  } else {
+    values.vipSpendThreshold = vipSpendThreshold;
+  }
+
+  if (inactiveCustomerDays === null) {
+    errors.inactiveCustomerDays = "Enter a whole number from 1 to 3650.";
+  } else {
+    values.inactiveCustomerDays = inactiveCustomerDays;
+  }
+
+  if (topSpenderPercent === null) {
+    errors.topSpenderPercent = "Enter a whole number from 1 to 100.";
+  } else {
+    values.topSpenderPercent = topSpenderPercent;
+  }
+
   const checkoutRewardLimit = parseCheckoutRewardLimit(formData);
 
   if (checkoutRewardLimit === null) {
@@ -1727,11 +1872,7 @@ export const action = async ({ request }) => {
       : existingStoreCreditRewards;
 
     values.redemptionRewards = serializeRewardSettings(
-      [
-        ...discountRewards,
-        ...giftCardRewards,
-        ...storeCreditRewards,
-      ],
+      [...discountRewards, ...giftCardRewards, ...storeCreditRewards],
       values.rewardTypePreference,
     );
   }
@@ -1744,6 +1885,10 @@ export const action = async ({ request }) => {
           ...Object.fromEntries(formData),
           checkoutRedemptionEnabled: values.checkoutRedemptionEnabled,
           storeCreditRedemptionEnabled: values.storeCreditRedemptionEnabled,
+          pointsExpiryEnabled: values.pointsExpiryEnabled,
+          pointsExpiryApplyToExisting: values.pointsExpiryApplyToExisting,
+          pointsExpiryUnit: values.pointsExpiryUnit,
+          pointsExpiryValue: formData.get("pointsExpiryValue"),
           preferredIntegration: values.preferredIntegration,
           rewardTypePreference: values.rewardTypePreference,
           discountRewardRows,
@@ -1854,8 +1999,25 @@ export default function LoyaltySettingsPage() {
     values,
     "storeCreditRedemptionEnabled",
   );
+  const pointsExpiryEnabled = getBooleanSettingValue(
+    values,
+    "pointsExpiryEnabled",
+  );
+  const pointsExpiryApplyToExisting = getBooleanSettingValue(
+    values,
+    "pointsExpiryApplyToExisting",
+  );
+  const pointsExpiryPolicyLocked = Boolean(
+    currentSettings.pointsExpiryStartedAt,
+  );
+  const savedPointsExpiryUnit = getSettingValue(values, "pointsExpiryUnit");
   const [isStoreCreditRedemptionEnabled, setIsStoreCreditRedemptionEnabled] =
     useState(storeCreditRedemptionEnabled);
+  const [isPointsExpiryEnabled, setIsPointsExpiryEnabled] =
+    useState(pointsExpiryEnabled);
+  const [pointsExpiryUnit, setPointsExpiryUnit] = useState(
+    savedPointsExpiryUnit,
+  );
   const [selectedRewardTypePreference, setSelectedRewardTypePreference] =
     useState(() => getRewardTypePreferenceValue(values));
   const [iframeAppearance, setIframeAppearance] = useState(() =>
@@ -1875,6 +2037,12 @@ export default function LoyaltySettingsPage() {
   useEffect(() => {
     setIsStoreCreditRedemptionEnabled(storeCreditRedemptionEnabled);
   }, [storeCreditRedemptionEnabled]);
+  useEffect(() => {
+    setIsPointsExpiryEnabled(pointsExpiryEnabled);
+  }, [pointsExpiryEnabled]);
+  useEffect(() => {
+    setPointsExpiryUnit(savedPointsExpiryUnit);
+  }, [savedPointsExpiryUnit]);
   const rewardTypePreference = selectedRewardTypePreference;
   const showDiscountRewards = rewardTypePreference !== "gift_card";
   const showGiftCardRewards = rewardTypePreference !== "discount";
@@ -2011,6 +2179,151 @@ export default function LoyaltySettingsPage() {
                       </div>
                     </section>
                   ))}
+
+                  <section className="rule-section">
+                    <s-stack gap="base">
+                      <div className="rule-section-header">
+                        <div>
+                          <h3>Points expiry</h3>
+                          <p>
+                            Expire each earning batch after a fixed lifetime.
+                            Redemptions consume the oldest points first.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="redemption-toggle">
+                        <input
+                          id="pointsExpiryEnabled"
+                          type="checkbox"
+                          name="pointsExpiryEnabled"
+                          value="true"
+                          checked={isPointsExpiryEnabled}
+                          onChange={(event) =>
+                            setIsPointsExpiryEnabled(event.target.checked)
+                          }
+                        />
+                        <div>
+                          <label htmlFor="pointsExpiryEnabled">
+                            Enable points expiry
+                          </label>
+                          <p>
+                            Points expire automatically after the configured
+                            lifetime and are recorded in customer history.
+                          </p>
+                        </div>
+                        <span>{isPointsExpiryEnabled ? "On" : "Off"}</span>
+                      </div>
+
+                      <div className="expiry-rule-grid">
+                        <s-number-field
+                          label="Points lifetime"
+                          name="pointsExpiryValue"
+                          min="1"
+                          max={
+                            pointsExpiryUnit === "days"
+                              ? "3650"
+                              : "120"
+                          }
+                          step="1"
+                          inputMode="numeric"
+                          value={getSettingValue(values, "pointsExpiryValue")}
+                          details="The lifetime assigned to each new earning batch."
+                          error={errors.pointsExpiryValue || undefined}
+                          required
+                        ></s-number-field>
+
+                        <label className="expiry-unit-field">
+                          <span>Lifetime unit</span>
+                          <select
+                            name="pointsExpiryUnit"
+                            value={pointsExpiryUnit}
+                            onChange={(event) =>
+                              setPointsExpiryUnit(event.target.value)
+                            }
+                          >
+                            <option value="months">Months</option>
+                            <option value="days">Days</option>
+                          </select>
+                          <small>
+                            Calendar months preserve the earning day where
+                            possible.
+                          </small>
+                        </label>
+                      </div>
+
+                      <label className="expiry-existing-option">
+                        {pointsExpiryPolicyLocked ? (
+                          <input
+                            type="hidden"
+                            name="pointsExpiryApplyToExisting"
+                            value={
+                              pointsExpiryApplyToExisting ? "true" : "false"
+                            }
+                          />
+                        ) : null}
+                        <input
+                          type="checkbox"
+                          name={
+                            pointsExpiryPolicyLocked
+                              ? undefined
+                              : "pointsExpiryApplyToExisting"
+                          }
+                          value="true"
+                          defaultChecked={pointsExpiryApplyToExisting}
+                          disabled={
+                            !isPointsExpiryEnabled || pointsExpiryPolicyLocked
+                          }
+                        />
+                        <span>
+                          <strong>Apply the rule to existing points</strong>
+                          <small>
+                            {pointsExpiryPolicyLocked
+                              ? "This migration policy was fixed when expiry was first enabled."
+                              : "Existing earning dates will be used and old points might expire on the next automated run. Leave this off to start their lifetime when expiry is enabled."}
+                          </small>
+                        </span>
+                      </label>
+
+                    </s-stack>
+                  </section>
+
+                  <section className="rule-section">
+                    <s-stack gap="base">
+                      <div className="rule-section-header">
+                        <div>
+                          <h3>Customer segmentation rules</h3>
+                          <p>
+                            Configure how VIP customers, inactive customers, and
+                            top spenders are identified on the customer list.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="segmentation-rule-grid">
+                        {SEGMENTATION_FIELDS.map((field) => (
+                          <s-number-field
+                            key={field.name}
+                            label={field.label}
+                            name={field.name}
+                            min={field.min}
+                            max={field.max}
+                            step={field.step}
+                            inputMode={field.inputMode}
+                            value={getSettingValue(values, field.name)}
+                            suffix={
+                              field.name === "vipSpendThreshold"
+                                ? currencyCode
+                                : field.suffix
+                            }
+                            details={field.details}
+                            error={errors[field.name] || undefined}
+                            required
+                          ></s-number-field>
+                        ))}
+                      </div>
+                    </s-stack>
+                  </section>
 
                   <section className="rule-section">
                     <s-stack gap="base">
@@ -2579,6 +2892,73 @@ const settingsStyles = `
     min-width: 0;
   }
 
+  .expiry-rule-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 0.55fr);
+  }
+
+  .segmentation-rule-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .expiry-unit-field {
+    display: grid;
+    gap: 6px;
+  }
+
+  .expiry-unit-field > span,
+  .expiry-existing-option strong {
+    color: #202223;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 20px;
+  }
+
+  .expiry-unit-field select {
+    appearance: auto;
+    background: #ffffff;
+    border: 1px solid #8c9196;
+    border-radius: 8px;
+    color: #202223;
+    font: inherit;
+    min-height: 38px;
+    padding: 8px 10px;
+    width: 100%;
+  }
+
+  .expiry-unit-field small,
+  .expiry-existing-option small {
+    color: #616a75;
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .expiry-existing-option {
+    align-items: start;
+    background: #fff8e5;
+    border: 1px solid #e6c968;
+    border-radius: 8px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .expiry-existing-option input {
+    accent-color: #008060;
+    height: 18px;
+    margin-block-start: 2px;
+    width: 18px;
+  }
+
+  .expiry-existing-option strong,
+  .expiry-existing-option small {
+    display: block;
+  }
+
   .redemption-toggle input {
     accent-color: #008060;
     height: 18px;
@@ -3107,6 +3487,10 @@ const settingsStyles = `
 
     .settings-hero,
     .settings-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .segmentation-rule-grid {
       grid-template-columns: 1fr;
     }
 

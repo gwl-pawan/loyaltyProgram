@@ -5,6 +5,7 @@ import {
   settleOrderRedemptions,
   settleGiftCardRedemptions,
 } from "../services/order-points.server";
+import { issueQualifiedReferralRewards } from "../services/referrals.server";
 import {
   logError,
   webhookAuthenticationError,
@@ -75,6 +76,7 @@ export const action = async ({ request }) => {
 
   try {
     await addOrderRewardPoints(shop, payload);
+    await issueQualifiedReferralRewards(shop, payload);
     await settleOrderRedemptions(shop, payload);
     await settleGiftCardRedemptions(shop, payload);
     await markWebhookLogProcessed(webhookLog);

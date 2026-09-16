@@ -1,5 +1,7 @@
 import prisma from "../db.server";
 import { logError } from "../services/errors.server";
+import { getCustomerStoreCreditSnapshot } from "../services/store-credit.server";
+import { tryExpireCustomerPoints } from "../services/points-expiry.server";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -61,6 +63,7 @@ function getActivityLabel(activityType) {
     store_credit_created: "Store credit added",
     store_credit_failed: "Store credit failed",
     points_refunded: "Points refunded",
+    points_expired: "Points expired",
   };
   return labels[activityType] || activityType || "Activity";
 }
@@ -77,6 +80,7 @@ function getActivityIcon(activityType) {
     store_credit_created: "✓",
     store_credit_failed: "✕",
     points_refunded: "↻",
+    points_expired: "⏱",
   };
   return icons[activityType] || "•";
 }
@@ -104,7 +108,7 @@ export const loader = async ({ request }) => {
           message: "Customer ID is not available",
           history: [],
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -129,8 +133,19 @@ export const loader = async ({ request }) => {
         success: true,
         customerId: null,
         history: [],
+        storeCreditAccounts: [],
+        storeCreditHistory: [],
       });
     }
+
+    await tryExpireCustomerPoints(customer.id);
+
+    const storeCreditSnapshot = await getCustomerStoreCreditSnapshot({
+      shopDomain,
+      customerId: shopifyCustomerId,
+      includeTransactions: true,
+      operation: "Load customer store credit history",
+    });
 
     const history = await prisma.rewardActivityLog.findMany({
       where: {
@@ -176,7 +191,8 @@ export const loader = async ({ request }) => {
         : null,
       pointsUsed:
         item.reward?.pointsUsed ||
-        getMetadataValue(item.metadata, "pointsUsed"),
+        getMetadataValue(item.metadata, "pointsUsed") ||
+        getMetadataValue(item.metadata, "pointsExpired"),
       discountAmount:
         item.reward?.discountAmount ||
         getMetadataValue(item.metadata, "discountAmount") ||
@@ -187,6 +203,9 @@ export const loader = async ({ request }) => {
       success: true,
       customerId: customer.id,
       history: formattedHistory,
+      storeCreditBalance: storeCreditSnapshot?.balance || null,
+      storeCreditAccounts: storeCreditSnapshot?.accounts || [],
+      storeCreditHistory: storeCreditSnapshot?.transactions || [],
     });
   } catch (error) {
     logError("customer-reward-history", error, {
@@ -198,8 +217,10 @@ export const loader = async ({ request }) => {
         success: false,
         message: "Could not load reward history",
         history: [],
+        storeCreditAccounts: [],
+        storeCreditHistory: [],
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 };
