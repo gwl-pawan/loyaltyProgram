@@ -1,4 +1,6 @@
 import prisma from "../db.server";
+import { tryQueueAndDispatchLoyaltyEmail } from "./email-delivery.server";
+import { LOYALTY_EMAIL_EVENTS } from "./email-notifications.server";
 import {
   calculateSpendPoints,
   getLoyaltySettings,
@@ -302,7 +304,10 @@ function findRecentGiftCardReward(candidateRewards, matchedIds, orderDate) {
 export async function addOrderRewardPoints(shopDomain, payload) {
   const customerData = payload?.customer;
   const orderId = getOrderId(payload);
+  const orderName = getOrderName(payload);
   const orderTotal = getOrderTotal(payload);
+  const currencyCode =
+    payload?.currency || payload?.presentment_currency || null;
 
   if (!customerData?.id) {
     return {
@@ -380,13 +385,13 @@ export async function addOrderRewardPoints(shopDomain, payload) {
       where: {
         id: customer.id,
       },
-        data: {
-          loyaltyPoints: {
-            increment: points,
-          },
-          lastActivityAt: new Date(),
+      data: {
+        loyaltyPoints: {
+          increment: points,
         },
-      });
+        lastActivityAt: new Date(),
+      },
+    });
 
     await tx.pointTransaction.create({
       data: {
@@ -399,6 +404,27 @@ export async function addOrderRewardPoints(shopDomain, payload) {
 
     return nextCustomer;
   });
+
+  if (orderId && updatedCustomer.email) {
+    await tryQueueAndDispatchLoyaltyEmail({
+      shopId: shop.id,
+      customerId: updatedCustomer.id,
+      eventType: LOYALTY_EMAIL_EVENTS.ORDER_POINTS,
+      recipientEmail: updatedCustomer.email,
+      recipientName: updatedCustomer.name,
+      subject: `You earned ${points} loyalty points`,
+      payload: {
+        points,
+        orderId,
+        orderName,
+        orderTotal,
+        currencyCode,
+        shopDomain,
+        customerId: updatedCustomer.shopifyCustomerId,
+      },
+      idempotencyKey: `order-points:${shop.id}:${updatedCustomer.shopifyCustomerId}:${orderId}`,
+    });
+  }
 
   return {
     status: "credited",
@@ -548,6 +574,29 @@ export async function settleOrderRedemptions(shopDomain, payload) {
 
     if (settled) {
       settledRewards.push(settled);
+
+      if (reward.customer?.email) {
+        await tryQueueAndDispatchLoyaltyEmail({
+          shopId: shop.id,
+          customerId: reward.customerId,
+          eventType: LOYALTY_EMAIL_EVENTS.REWARD_APPLIED,
+          recipientEmail: reward.customer.email,
+          recipientName: reward.customer.name,
+          subject: "Your loyalty reward was applied",
+          payload: {
+            rewardType: reward.rewardType,
+            rewardCode: reward.rewardCode,
+            pointsUsed: reward.pointsUsed,
+            discountAmount: reward.discountAmount,
+            orderId,
+            orderName,
+            orderTotal,
+            currencyCode,
+            shopDomain,
+          },
+          idempotencyKey: `reward-applied:${shop.id}:${reward.id}:${orderId}`,
+        });
+      }
     }
   }
 
@@ -766,6 +815,29 @@ export async function settleGiftCardRedemptions(shopDomain, payload) {
       });
 
       settledRewards.push(updatedReward);
+
+      if (customer.email) {
+        await tryQueueAndDispatchLoyaltyEmail({
+          shopId: shop.id,
+          customerId: customer.id,
+          eventType: LOYALTY_EMAIL_EVENTS.REWARD_APPLIED,
+          recipientEmail: customer.email,
+          recipientName: customer.name,
+          subject: "Your loyalty gift card was applied",
+          payload: {
+            rewardType: reward.rewardType,
+            rewardCode: reward.rewardCode,
+            pointsUsed: reward.pointsUsed,
+            amount: reward.discountAmount,
+            orderId,
+            orderName,
+            orderTotal,
+            currencyCode,
+            shopDomain,
+          },
+          idempotencyKey: `reward-applied:${shop.id}:${reward.id}:${orderId}`,
+        });
+      }
     } catch (error) {
       console.error(
         `[settleGiftCardRedemptions] Error applying gift card ${reward.rewardCode}`,

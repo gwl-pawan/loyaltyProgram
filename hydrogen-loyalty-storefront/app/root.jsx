@@ -14,6 +14,11 @@ import {FOOTER_QUERY, HEADER_QUERY} from '~/lib/fragments';
 import resetStyles from '~/styles/reset.css?url';
 import appStyles from '~/styles/app.css?url';
 import {PageLayout} from './components/PageLayout';
+import {
+  claimReferralVisit,
+  loadCustomerId,
+  trackReferralVisit,
+} from '~/lib/loyalty';
 
 /**
  * This is important to avoid re-fetching root queries on sub-navigations
@@ -62,6 +67,7 @@ export function links() {
  * @param {Route.LoaderArgs} args
  */
 export async function loader(args) {
+  await captureReferral(args);
   // Start fetching non-critical data without blocking time to first byte
   const deferredData = loadDeferredData(args);
 
@@ -87,6 +93,53 @@ export async function loader(args) {
       language: args.context.storefront.i18n.language,
     },
   };
+}
+
+async function captureReferral({request, context}) {
+  const url = new URL(request.url);
+  const code = url.searchParams.get('ref');
+  const storedVisit = context.session.get('loyaltyReferral');
+  let visit = storedVisit;
+
+  try {
+    if (code) {
+      visit = {
+        code,
+        visitorToken:
+          storedVisit?.visitorToken || globalThis.crypto.randomUUID(),
+      };
+      const tracked = await trackReferralVisit(context, {
+        ...visit,
+        landingUrl: request.url,
+      });
+
+      if (!tracked.tracked) {
+        context.session.unset('loyaltyReferral');
+        return;
+      }
+
+      visit.expiresAt = tracked.expiresAt;
+      context.session.set('loyaltyReferral', visit);
+    }
+
+    if (!visit?.visitorToken) return;
+    if (visit.expiresAt && new Date(visit.expiresAt) <= new Date()) {
+      context.session.unset('loyaltyReferral');
+      return;
+    }
+
+    const customerId = await loadCustomerId(context.customerAccount);
+    if (!customerId) return;
+
+    const result = await claimReferralVisit(
+      context,
+      customerId,
+      visit.visitorToken,
+    );
+    if (result.claimed) context.session.unset('loyaltyReferral');
+  } catch (error) {
+    console.error('[hydrogen-referrals] Could not capture referral', error);
+  }
 }
 
 /**

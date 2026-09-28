@@ -10,6 +10,7 @@ The application currently supports:
 - Points earned from order value.
 - Point deductions for refunds.
 - Referral links, conversion tracking, and first-paid-order rewards.
+- Birthday data collection and automated annual points rewards.
 - Discount-code rewards.
 - Gift-card rewards.
 - Shopify store-credit rewards.
@@ -17,6 +18,8 @@ The application currently supports:
 - Customer balances, reward history, and merchant activity reporting.
 - Theme, checkout, customer-account, iframe, and Hydrogen surfaces.
 - Merchant-editable text, rewards, colors, font settings, and custom iframe CSS.
+
+See [Birthday rewards](birthday-rewards.md) for configuration, scheduling, privacy, and QA details.
 
 ## 2. Technology stack
 
@@ -400,6 +403,49 @@ Set `POINTS_EXPIRY_SECRET` to a dedicated random production secret. The route
 returns `503` until it is configured. Repeated or overlapping runs are safe:
 each earning batch has a unique expiry idempotency key.
 
+### Email notification dispatcher
+
+Loyalty events write `EmailNotification` rows and immediately attempt delivery
+through the configured provider. The notification is claimed before sending,
+so webhook retries cannot send the same email twice.
+
+Keep the protected dispatcher endpoint as a recovery worker for notifications
+left pending when a process stops before immediate delivery begins. Schedule a
+recurring backend request:
+
+```http
+POST /api/email-notifications/dispatch
+Authorization: Bearer YOUR_EMAIL_DISPATCH_SECRET
+Content-Type: application/json
+
+{"limit": 25}
+```
+
+Set `EMAIL_DISPATCH_SECRET` to a dedicated random production secret. The route
+returns `503` until it is configured. The endpoint is not required for normal
+immediate delivery, but a recurring recovery call is recommended. By default
+the dispatcher uses
+`EMAIL_PROVIDER=log`, which marks queued emails as sent after writing a server
+log entry. To send real email through Resend, set:
+
+```dotenv
+EMAIL_PROVIDER="resend"
+EMAIL_FROM="Rewards <rewards@example.com>"
+RESEND_API_KEY="..."
+```
+
+To send through Twilio SendGrid instead, create an API key with Mail Send
+permission and configure a verified sender address or authenticated domain:
+
+```dotenv
+EMAIL_PROVIDER="sendgrid"
+EMAIL_FROM="Rewards <rewards@example.com>"
+SENDGRID_API_KEY="SG..."
+```
+
+SendGrid accepts the request only when `EMAIL_FROM` matches a verified sender
+identity. Domain authentication is recommended for production delivery.
+
 ## 13. Webhooks
 
 | Topic               | Route                         | Behavior                                                          |
@@ -496,6 +542,11 @@ SCOPES="..."
 NODE_ENV="production"
 HYDROGEN_LOYALTY_API_TOKEN="..." # when Hydrogen APIs are used
 POINTS_EXPIRY_SECRET="..." # required for the automated expiry worker
+EMAIL_DISPATCH_SECRET="..." # required for the email notification dispatcher
+EMAIL_PROVIDER="log" # use "sendgrid" or "resend" for real email delivery
+EMAIL_FROM="Rewards <rewards@example.com>" # required for SendGrid or Resend
+SENDGRID_API_KEY="..." # required when EMAIL_PROVIDER="sendgrid"
+RESEND_API_KEY="..." # required when EMAIL_PROVIDER="resend"
 ```
 
 For Railway, leave the custom Start Command empty so Docker uses:

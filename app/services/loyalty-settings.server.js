@@ -1,4 +1,5 @@
 import prisma from "../db.server";
+import { getEmailNotificationSettings } from "./email-notifications.server";
 import { DEFAULT_LOYALTY_SETTINGS } from "./loyalty-settings.shared";
 
 export {
@@ -67,6 +68,7 @@ export async function getLoyaltySettings(shopDomain) {
       ...filterLoyaltySettingData(DEFAULT_LOYALTY_SETTINGS),
     },
   });
+  await getEmailNotificationSettings(shop.id);
 
   return {
     shop,

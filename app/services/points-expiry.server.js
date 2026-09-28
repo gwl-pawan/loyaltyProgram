@@ -1,4 +1,6 @@
 import prisma from "../db.server";
+import { tryQueueAndDispatchLoyaltyEmail } from "./email-delivery.server";
+import { LOYALTY_EMAIL_EVENTS } from "./email-notifications.server";
 import { logError } from "./errors.server";
 import {
   addExpiryPeriod,
@@ -169,9 +171,14 @@ export async function expireCustomerPoints(
     where: { id: customerId },
     select: {
       id: true,
+      name: true,
+      email: true,
+      shopifyCustomerId: true,
       loyaltyPoints: true,
       shop: {
         select: {
+          id: true,
+          shopDomain: true,
           loyaltySetting: true,
         },
       },
@@ -212,7 +219,31 @@ export async function expireCustomerPoints(
   for (const lot of expiredLots) {
     try {
       const result = await finalizeExpiredLot(customerId, lot, now);
-      if (result) results.push(result);
+      if (result) {
+        results.push(result);
+
+        if (result.pointsExpired > 0 && customer.email) {
+          await tryQueueAndDispatchLoyaltyEmail({
+            shopId: customer.shop.id,
+            customerId: customer.id,
+            eventType: LOYALTY_EMAIL_EVENTS.POINTS_EXPIRED,
+            recipientEmail: customer.email,
+            recipientName: customer.name,
+            subject: `${result.pointsExpired} loyalty points expired`,
+            payload: {
+              pointsExpired: result.pointsExpired,
+              pointsBalanceAfter: result.balance,
+              sourceTransactionId: result.sourceTransactionId,
+              shopDomain: customer.shop.shopDomain,
+              customerId: customer.shopifyCustomerId,
+              expiredAt: now,
+              earnedAt: lot.earnedAt,
+              expiresAt: lot.expiresAt,
+            },
+            idempotencyKey: `points-expired:${customer.id}:${result.sourceTransactionId}`,
+          });
+        }
+      }
     } catch (error) {
       if (error?.code !== "POINTS_BALANCE_CHANGED") throw error;
       logError("points-expiry:balance-changed", error, { customerId });

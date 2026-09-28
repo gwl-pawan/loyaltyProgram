@@ -1,0 +1,78 @@
+.loyalty-birthday {
+  border: 1px solid rgba(32, 34, 35, 0.16);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.loyalty-birthday h2,
+.loyalty-birthday p {
+  margin: 0;
+}
+
+.loyalty-birthday form {
+  display: grid;
+  gap: 14px;
+}
+
+.loyalty-birthday__fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.loyalty-birthday label {
+  display: grid;
+  gap: 6px;
+}
+
+.loyalty-birthday label span {
+  font-weight: 600;
+}
+
+.loyalty-birthday input {
+  border: 1px solid rgba(32, 34, 35, 0.28);
+  border-radius: 8px;
+  font: inherit;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.loyalty-birthday__privacy {
+  color: rgba(32, 34, 35, 0.72);
+  font-size: 0.9em;
+}
+
+.loyalty-birthday__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.loyalty-birthday button {
+  background: transparent;
+  border: 1px solid var(--birthday-accent);
+  border-radius: 8px;
+  color: var(--birthday-accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 10px 14px;
+}
+
+.loyalty-birthday button[type='submit'] {
+  background: var(--birthday-accent);
+  color: #fff;
+}
+
+.loyalty-birthday button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+@media (max-width: 480px) {
+  .loyalty-birthday__fields {
+    grid-template-columns: 1fr;
+  }
+}

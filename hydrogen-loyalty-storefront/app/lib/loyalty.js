@@ -56,10 +56,7 @@ export async function loadLoyaltyBalance(context, customerId, options = {}) {
     params.set('surface', options.surface);
   }
 
-  return fetchLoyaltyJson(
-    context,
-    `/api/hydrogen/loyalty-balance?${params}`,
-  );
+  return fetchLoyaltyJson(context, `/api/hydrogen/loyalty-balance?${params}`);
 }
 
 export async function loadLoyaltyHistory(context, customerId) {
@@ -73,6 +70,70 @@ export async function loadLoyaltyHistory(context, customerId) {
     context,
     `/api/hydrogen/customer-reward-history?${params}`,
   );
+}
+
+export async function loadReferralProfile(context, customerId) {
+  const {shopDomain} = await getLoyaltyConfig(context);
+  const params = new URLSearchParams({customerId, shop: shopDomain});
+
+  return fetchLoyaltyJson(context, `/api/hydrogen/referrals?${params}`);
+}
+
+export async function loadBirthdayProfile(context, customerId) {
+  const {shopDomain} = await getLoyaltyConfig(context);
+  const params = new URLSearchParams({customerId, shop: shopDomain});
+
+  return fetchLoyaltyJson(context, `/api/hydrogen/birthday?${params}`);
+}
+
+export async function saveBirthdayProfile(context, customerId, birthday) {
+  const {shopDomain} = await getLoyaltyConfig(context);
+
+  return fetchLoyaltyJson(context, '/api/hydrogen/birthday', {
+    method: 'POST',
+    body: JSON.stringify({shop: shopDomain, customerId, birthday}),
+  });
+}
+
+export async function deleteBirthdayProfile(context, customerId) {
+  const {shopDomain} = await getLoyaltyConfig(context);
+
+  return fetchLoyaltyJson(context, '/api/hydrogen/birthday', {
+    method: 'DELETE',
+    body: JSON.stringify({shop: shopDomain, customerId, action: 'delete'}),
+  });
+}
+
+export async function trackReferralVisit(
+  context,
+  {code, visitorToken, landingUrl},
+) {
+  const {shopDomain} = await getLoyaltyConfig(context);
+
+  return fetchLoyaltyJson(context, '/api/hydrogen/referrals', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'track',
+      shop: shopDomain,
+      code,
+      visitorToken,
+      landingUrl,
+    }),
+  });
+}
+
+export async function claimReferralVisit(context, customerId, visitorToken) {
+  const {shopDomain} = await getLoyaltyConfig(context);
+
+  return fetchLoyaltyJson(context, '/api/hydrogen/referrals', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'claim',
+      shop: shopDomain,
+      customerId,
+      visitorToken,
+    }),
+  });
 }
 
 export async function redeemLoyaltyReward(context, customerId, reward) {
@@ -92,7 +153,8 @@ export async function redeemLoyaltyReward(context, customerId, reward) {
 }
 
 function firstEnvValue(...values) {
-  return values.find((value) => typeof value === 'string' && value.trim())
+  return values
+    .find((value) => typeof value === 'string' && value.trim())
     ?.trim();
 }
 

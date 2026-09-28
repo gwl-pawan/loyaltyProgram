@@ -1,0 +1,61 @@
+<div
+  class="loyalty-birthday"
+  data-loyalty-birthday
+  data-endpoint="/apps/loyalty-points/api/birthdays"
+  data-loading-text="{{ 'birthday.loading' | t | escape }}"
+  data-saved-text="{{ 'birthday.saved' | t | escape }}"
+  data-removed-text="{{ 'birthday.removed' | t | escape }}"
+  data-error-text="{{ 'birthday.error' | t | escape }}"
+  data-rule-template="{{ 'birthday.rule' | t: points: '__POINTS__', days: '__DAYS__' | escape }}"
+  data-saved-template="{{ 'birthday.saved_label' | t: birthday: '__BIRTHDAY__' | escape }}"
+  style="--birthday-accent: {{ block.settings.accent_color }}"
+  {{ block.shopify_attributes }}
+>
+  <h2>{{ 'birthday.heading' | t }}</h2>
+
+  {% if customer %}
+    <p data-birthday-description>{{ 'birthday.description' | t }}</p>
+    <form data-birthday-form>
+      <div class="loyalty-birthday__fields" data-birthday-fields>
+        <label>
+          <span>{{ 'birthday.month' | t }}</span>
+          <input name="month" type="number" min="1" max="12" inputmode="numeric" required>
+        </label>
+        <label>
+          <span>{{ 'birthday.day' | t }}</span>
+          <input name="day" type="number" min="1" max="31" inputmode="numeric" required>
+        </label>
+      </div>
+      <p class="loyalty-birthday__privacy">{{ 'birthday.privacy' | t }}</p>
+      <p data-birthday-saved hidden></p>
+      <p data-birthday-locked hidden>{{ 'birthday.correction' | t }}</p>
+      <p data-birthday-message role="status" aria-live="polite"></p>
+      <div class="loyalty-birthday__actions">
+        <button type="submit" data-birthday-save>{{ 'birthday.save' | t }}</button>
+        <button type="button" data-birthday-remove hidden>{{ 'birthday.remove' | t }}</button>
+      </div>
+    </form>
+  {% else %}
+    <p>
+      {{ 'birthday.login_prompt' | t }}
+      <a href="{{ routes.account_login_url }}">{{ 'birthday.login' | t }}</a>
+    </p>
+  {% endif %}
+</div>
+
+{% schema %}
+{
+  "name": "Birthday reward",
+  "target": "section",
+  "stylesheet": "birthday-reward.css",
+  "javascript": "birthday-reward.js",
+  "settings": [
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Accent color",
+      "default": "#008060"
+    }
+  ]
+}
+{% endschema %}

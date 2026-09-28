@@ -107,6 +107,10 @@
   }
 
   async function captureReferral(widget) {
+    if (document.querySelector('[data-loyalty-global-floating="true"]')) {
+      return;
+    }
+
     const dataset = widget.dataset;
     const storageKey = `loyalty-referral:${dataset.shopDomain}`;
     const code = new URL(window.location.href).searchParams.get("ref");
@@ -118,10 +122,16 @@
       visit = null;
     }
 
-    if (code && !visit) {
+    if (visit?.expiresAt && new Date(visit.expiresAt).getTime() <= Date.now()) {
+      window.localStorage.removeItem(storageKey);
+      visit = null;
+    }
+
+    if (code && (!visit || visit.code !== code)) {
       visit = {
         code,
-        visitorToken: window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+        visitorToken:
+          window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
       };
       window.localStorage.setItem(storageKey, JSON.stringify(visit));
     }
@@ -131,37 +141,107 @@
 
     try {
       if (code) {
-        await fetch(endpoint, {
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "track", shop: dataset.shopDomain, code: visit.code, visitorToken: visit.visitorToken, landingUrl: window.location.href }),
+          body: JSON.stringify({
+            action: "track",
+            shop: dataset.shopDomain,
+            code: visit.code,
+            visitorToken: visit.visitorToken,
+            landingUrl: window.location.href,
+          }),
         });
+        const result = await readJsonResponse(
+          response,
+          "Could not track referral",
+        );
+
+        if (!result.tracked) {
+          window.localStorage.removeItem(storageKey);
+          return;
+        }
+
+        if (result.expiresAt) {
+          visit.expiresAt = result.expiresAt;
+          window.localStorage.setItem(storageKey, JSON.stringify(visit));
+        }
       }
+
+      await updateReferralCartAttribute(visit.visitorToken);
 
       if (dataset.customerId) {
         const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "claim", shop: dataset.shopDomain, customerId: dataset.customerId, visitorToken: visit.visitorToken }),
+          body: JSON.stringify({
+            action: "claim",
+            shop: dataset.shopDomain,
+            customerId: dataset.customerId,
+            visitorToken: visit.visitorToken,
+          }),
         });
-        const result = await readJsonResponse(response, "Could not claim referral");
-        if (result.claimed) window.localStorage.removeItem(storageKey);
+        const result = await readJsonResponse(
+          response,
+          "Could not claim referral",
+        );
+        if (result.claimed) {
+          await updateReferralCartAttribute("");
+          window.localStorage.removeItem(storageKey);
+        }
       }
     } catch (error) {
       console.warn("[loyalty-points] Could not capture referral", error);
     }
   }
 
+  async function updateReferralCartAttribute(visitorToken) {
+    const root = window.Shopify?.routes?.root || "/";
+
+    try {
+      const response = await fetch(`${root}cart/update.js`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          attributes: {
+            __loyalty_referral_token: visitorToken || "",
+          },
+        }),
+      });
+
+      if (!response.ok) throw new Error("Cart update failed");
+    } catch (error) {
+      console.warn(
+        "[loyalty-points] Could not persist referral on cart",
+        error,
+      );
+    }
+  }
+
   async function loadReferralProfile(widget) {
     const dataset = widget.dataset;
     const container = widget.querySelector("[data-loyalty-referral-profile]");
-    if (!container || !dataset.customerId || container.dataset.loaded === "true") return;
+    if (
+      !container ||
+      !dataset.customerId ||
+      container.dataset.loaded === "true"
+    )
+      return;
 
     try {
-      const params = new URLSearchParams({ shop: dataset.shopDomain, customerId: dataset.customerId });
+      const params = new URLSearchParams({
+        shop: dataset.shopDomain,
+        customerId: dataset.customerId,
+      });
       const endpoint = `${(dataset.apiBaseUrl || "/apps/loyalty-points").replace(/\/$/, "")}/api/referrals?${params}`;
       const response = await fetch(endpoint);
-      const data = await readJsonResponse(response, "Could not load referral link");
+      const data = await readJsonResponse(
+        response,
+        "Could not load referral link",
+      );
       if (!data.referral?.enabled) return;
 
       const link = container.querySelector("[data-loyalty-referral-link]");
@@ -309,7 +389,10 @@
         .toString()
         .toLowerCase(),
       pointsUsed: Number(
-        pendingReward.pointsUsed ?? pendingReward.points ?? pendingReward.pointsToRedeem ?? 0,
+        pendingReward.pointsUsed ??
+          pendingReward.points ??
+          pendingReward.pointsToRedeem ??
+          0,
       ),
       discountAmount:
         pendingReward.discountAmount ?? pendingReward.amount ?? null,
@@ -325,7 +408,10 @@
     const rewardAmount = Number(reward.discount ?? reward.amount ?? 0);
 
     if (rewardType !== normalizedPending.rewardType) return false;
-    if (Number.isNaN(rewardPoints) || rewardPoints !== normalizedPending.pointsUsed)
+    if (
+      Number.isNaN(rewardPoints) ||
+      rewardPoints !== normalizedPending.pointsUsed
+    )
       return false;
 
     if (rewardType === "discount") {
@@ -1393,7 +1479,9 @@
     (event) => {
       const copyReferral = event.target.closest("[data-loyalty-copy-referral]");
       if (copyReferral) {
-        const input = copyReferral.parentElement?.querySelector("[data-loyalty-referral-link]");
+        const input = copyReferral.parentElement?.querySelector(
+          "[data-loyalty-referral-link]",
+        );
         if (input?.value) {
           navigator.clipboard?.writeText(input.value);
           copyReferral.textContent = "Copied";

@@ -30,6 +30,8 @@ import { getEffectiveIntegration } from "../services/shop-plan.server";
 import { logError } from "../services/errors.server";
 import { ensurePlanAwareLoyaltySetup } from "../services/loyalty-installation.server";
 import { getPublicRequestOrigin } from "../services/webhook-subscriptions.server";
+import { getEmailNotificationSettings } from "../services/email-notifications.server";
+import { DEFAULT_EMAIL_NOTIFICATION_SETTINGS } from "../services/email-notifications.shared";
 
 const SETTING_FIELDS = [
   {
@@ -82,7 +84,31 @@ const SETTING_FIELDS = [
     label: "Friend reward",
     suffix: "points",
     help: "Credit after the referred customer's first paid order.",
-    description: "Points awarded to the new customer who used the referral link.",
+    description:
+      "Points awarded to the new customer who used the referral link.",
+  },
+  {
+    name: "referralAttributionDays",
+    label: "Attribution window",
+    suffix: "days",
+    help: "Time allowed between the referral click and first paid order.",
+    description:
+      "Referral visits expire after this many days if the friend has not completed a qualifying first order.",
+  },
+  {
+    name: "birthdayRewardPoints",
+    label: "Birthday reward",
+    suffix: "points",
+    help: "Credit once per customer each year.",
+    description: "Points automatically added during the customer's birthday.",
+  },
+  {
+    name: "birthdayRewardMinimumLeadDays",
+    label: "Collection lead time",
+    suffix: "days",
+    help: "Birthday must be saved this many days before the reward date.",
+    description:
+      "Reduces abuse by delaying eligibility after a birthday is first saved or changed.",
   },
 ];
 
@@ -104,8 +130,61 @@ const RULE_GROUPS = [
   },
   {
     title: "Referrals",
-    description: "Reward both customers after a referred friend's first paid order.",
-    fields: ["referralAdvocatePoints", "referralFriendPoints"],
+    description:
+      "Reward both customers after a referred friend's first paid order.",
+    fields: [
+      "referralAdvocatePoints",
+      "referralFriendPoints",
+      "referralAttributionDays",
+    ],
+  },
+  {
+    title: "Birthday rewards",
+    description: "Celebrate customers with an automatic annual points credit.",
+    fields: ["birthdayRewardPoints", "birthdayRewardMinimumLeadDays"],
+  },
+];
+
+const EMAIL_NOTIFICATION_FIELDS = [
+  {
+    name: "signupBonusEnabled",
+    label: "Signup bonus",
+    description: "Welcome points credited when a customer joins loyalty.",
+  },
+  {
+    name: "orderPointsEnabled",
+    label: "Order points",
+    description: "Points credited after eligible paid orders.",
+  },
+  {
+    name: "rewardCreatedEnabled",
+    label: "Reward created",
+    description: "Discount, gift card, or store credit created from points.",
+  },
+  {
+    name: "rewardAppliedEnabled",
+    label: "Reward applied",
+    description: "Pending rewards applied to a paid order.",
+  },
+  {
+    name: "refundEnabled",
+    label: "Refund updates",
+    description: "Points deducted or returned after refunds.",
+  },
+  {
+    name: "pointsExpiryEnabled",
+    label: "Points expiry",
+    description: "Points expired by the automated expiry worker.",
+  },
+  {
+    name: "referralEnabled",
+    label: "Referral rewards",
+    description: "Referral points credited after the first paid order.",
+  },
+  {
+    name: "birthdayRewardEnabled",
+    label: "Birthday rewards",
+    description: "Annual birthday points credited to eligible customers.",
   },
 ];
 
@@ -605,6 +684,17 @@ function normalizeTextSetting(formData, fieldName) {
   return value || fallback;
 }
 
+function normalizeTimeZoneSetting(formData) {
+  const value = String(formData.get("birthdayRewardTimeZone") || "").trim();
+
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value }).format();
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeColorSetting(formData, fieldName) {
   const fallback = DEFAULT_LOYALTY_SETTINGS[fieldName] || "#000000";
   const value = String(formData.get(fieldName) || "").trim();
@@ -650,6 +740,25 @@ function getBooleanSettingValue(values, fieldName) {
   const value = values?.[fieldName] ?? DEFAULT_LOYALTY_SETTINGS[fieldName];
 
   return value === true || value === "true";
+}
+
+function getEmailSettingValue(values, fieldName) {
+  const value =
+    values?.[fieldName] ?? DEFAULT_EMAIL_NOTIFICATION_SETTINGS[fieldName];
+
+  return value === true || value === "true";
+}
+
+function getSubmittedEmailSettings(formData) {
+  return {
+    enabled: formData.getAll("emailNotificationsEnabled").includes("true"),
+    ...Object.fromEntries(
+      EMAIL_NOTIFICATION_FIELDS.map((field) => [
+        field.name,
+        formData.getAll(field.name).includes("true"),
+      ]),
+    ),
+  };
 }
 
 function getIframeAppearanceValues(values) {
@@ -1625,6 +1734,7 @@ export const loader = async ({ request }) => {
     planSyncError,
   } = await ensurePlanAwareLoyaltySetup(session.shop, admin);
   const settings = await mergeSavedIframeAppearance(savedSettings, planShop.id);
+  const emailSettings = await getEmailNotificationSettings(planShop.id);
   let currencyCode = "USD";
 
   try {
@@ -1649,6 +1759,7 @@ export const loader = async ({ request }) => {
 
   return Response.json({
     settings,
+    emailSettings,
     currencyCode,
     shopPlan: {
       name: planShop.shopifyPlanName || "Unknown",
@@ -1674,6 +1785,7 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
 
   const values = {};
+  const emailValues = getSubmittedEmailSettings(formData);
   const errors = {};
   const {
     shop: planShop,
@@ -1741,6 +1853,19 @@ export const action = async ({ request }) => {
   values.storeCreditRedemptionEnabled = formData
     .getAll("storeCreditRedemptionEnabled")
     .includes("true");
+  values.referralProgramEnabled = formData
+    .getAll("referralProgramEnabled")
+    .includes("true");
+  values.birthdayRewardEnabled = formData
+    .getAll("birthdayRewardEnabled")
+    .includes("true");
+  const birthdayRewardTimeZone = normalizeTimeZoneSetting(formData);
+  if (!birthdayRewardTimeZone) {
+    errors.birthdayRewardTimeZone =
+      "Enter a valid IANA time zone, such as America/New_York.";
+  } else {
+    values.birthdayRewardTimeZone = birthdayRewardTimeZone;
+  }
   values.pointsExpiryEnabled = formData
     .getAll("pointsExpiryEnabled")
     .includes("true");
@@ -1885,6 +2010,9 @@ export const action = async ({ request }) => {
           ...Object.fromEntries(formData),
           checkoutRedemptionEnabled: values.checkoutRedemptionEnabled,
           storeCreditRedemptionEnabled: values.storeCreditRedemptionEnabled,
+          referralProgramEnabled: values.referralProgramEnabled,
+          birthdayRewardEnabled: values.birthdayRewardEnabled,
+          birthdayRewardTimeZone: formData.get("birthdayRewardTimeZone"),
           pointsExpiryEnabled: values.pointsExpiryEnabled,
           pointsExpiryApplyToExisting: values.pointsExpiryApplyToExisting,
           pointsExpiryUnit: values.pointsExpiryUnit,
@@ -1895,6 +2023,7 @@ export const action = async ({ request }) => {
           giftCardRewardRows,
           storeCreditRewardRows,
         },
+        emailSettings: emailValues,
         shopPlan: {
           name: planShop.shopifyPlanName || "Unknown",
           isShopifyPlus: Boolean(planShop.isShopifyPlus),
@@ -1915,6 +2044,16 @@ export const action = async ({ request }) => {
         shopId: planShop.id,
       },
       data: filterLoyaltySettingData(values),
+    });
+    await prisma.emailNotificationSetting.upsert({
+      where: {
+        shopId: planShop.id,
+      },
+      update: emailValues,
+      create: {
+        shopId: planShop.id,
+        ...emailValues,
+      },
     });
     await updateSavedIframeAppearance(planShop.id, values);
     settings = await mergeSavedIframeAppearance(
@@ -1937,6 +2076,7 @@ export const action = async ({ request }) => {
           discountRewardRows,
           giftCardRewardRows,
         },
+        emailSettings: emailValues,
         shopPlan: {
           name: planShop.shopifyPlanName || "Unknown",
           isShopifyPlus: Boolean(planShop.isShopifyPlus),
@@ -1951,6 +2091,7 @@ export const action = async ({ request }) => {
 
   return Response.json({
     settings,
+    emailSettings: emailValues,
     saved: true,
     shopPlan: {
       name: planShop.shopifyPlanName || "Unknown",
@@ -1963,7 +2104,8 @@ export const action = async ({ request }) => {
 };
 
 export default function LoyaltySettingsPage() {
-  const { currencyCode, settings, shopPlan, headlessApi } = useLoaderData();
+  const { currencyCode, settings, emailSettings, shopPlan, headlessApi } =
+    useLoaderData();
 
   const actionData = useActionData();
 
@@ -1972,6 +2114,7 @@ export default function LoyaltySettingsPage() {
   const isSaving = navigation.state === "submitting";
 
   const currentSettings = actionData?.settings || settings;
+  const currentEmailSettings = actionData?.emailSettings || emailSettings;
 
   const values = actionData?.values || currentSettings;
   const currentShopPlan = actionData?.shopPlan || shopPlan;
@@ -2003,9 +2146,21 @@ export default function LoyaltySettingsPage() {
     values,
     "pointsExpiryEnabled",
   );
+  const referralProgramEnabled = getBooleanSettingValue(
+    values,
+    "referralProgramEnabled",
+  );
+  const birthdayRewardEnabled = getBooleanSettingValue(
+    values,
+    "birthdayRewardEnabled",
+  );
   const pointsExpiryApplyToExisting = getBooleanSettingValue(
     values,
     "pointsExpiryApplyToExisting",
+  );
+  const emailNotificationsEnabled = getEmailSettingValue(
+    currentEmailSettings,
+    "enabled",
   );
   const pointsExpiryPolicyLocked = Boolean(
     currentSettings.pointsExpiryStartedAt,
@@ -2015,6 +2170,12 @@ export default function LoyaltySettingsPage() {
     useState(storeCreditRedemptionEnabled);
   const [isPointsExpiryEnabled, setIsPointsExpiryEnabled] =
     useState(pointsExpiryEnabled);
+  const [isReferralProgramEnabled, setIsReferralProgramEnabled] = useState(
+    referralProgramEnabled,
+  );
+  const [isBirthdayRewardEnabled, setIsBirthdayRewardEnabled] = useState(
+    birthdayRewardEnabled,
+  );
   const [pointsExpiryUnit, setPointsExpiryUnit] = useState(
     savedPointsExpiryUnit,
   );
@@ -2040,6 +2201,12 @@ export default function LoyaltySettingsPage() {
   useEffect(() => {
     setIsPointsExpiryEnabled(pointsExpiryEnabled);
   }, [pointsExpiryEnabled]);
+  useEffect(() => {
+    setIsReferralProgramEnabled(referralProgramEnabled);
+  }, [referralProgramEnabled]);
+  useEffect(() => {
+    setIsBirthdayRewardEnabled(birthdayRewardEnabled);
+  }, [birthdayRewardEnabled]);
   useEffect(() => {
     setPointsExpiryUnit(savedPointsExpiryUnit);
   }, [savedPointsExpiryUnit]);
@@ -2151,6 +2318,71 @@ export default function LoyaltySettingsPage() {
                         </div>
                       </div>
 
+                      {group.title === "Referrals" ? (
+                        <div className="redemption-toggle">
+                          <input
+                            id="referralProgramEnabled"
+                            type="checkbox"
+                            name="referralProgramEnabled"
+                            value="true"
+                            checked={isReferralProgramEnabled}
+                            onChange={(event) =>
+                              setIsReferralProgramEnabled(event.target.checked)
+                            }
+                          />
+                          <div>
+                            <label htmlFor="referralProgramEnabled">
+                              Enable referral program
+                            </label>
+                            <p>
+                              Track shared links and reward both customers after
+                              the referred friend&apos;s first paid order.
+                            </p>
+                          </div>
+                          <span>{isReferralProgramEnabled ? "On" : "Off"}</span>
+                        </div>
+                      ) : null}
+
+                      {group.title === "Birthday rewards" ? (
+                        <>
+                          <div className="redemption-toggle">
+                            <input
+                              id="birthdayRewardEnabled"
+                              type="checkbox"
+                              name="birthdayRewardEnabled"
+                              value="true"
+                              checked={isBirthdayRewardEnabled}
+                              onChange={(event) =>
+                                setIsBirthdayRewardEnabled(event.target.checked)
+                              }
+                            />
+                            <div>
+                              <label htmlFor="birthdayRewardEnabled">
+                                Enable birthday rewards
+                              </label>
+                              <p>
+                                Collect month and day from customers and issue
+                                points automatically once per calendar year.
+                              </p>
+                            </div>
+                            <span>
+                              {isBirthdayRewardEnabled ? "On" : "Off"}
+                            </span>
+                          </div>
+                          <s-text-field
+                            label="Birthday reward time zone"
+                            name="birthdayRewardTimeZone"
+                            value={getSettingValue(
+                              values,
+                              "birthdayRewardTimeZone",
+                            )}
+                            details="IANA time zone used to determine each reward date."
+                            error={errors.birthdayRewardTimeZone || undefined}
+                            required
+                          ></s-text-field>
+                        </>
+                      ) : null}
+
                       <div className="rule-field-grid">
                         {group.fields.map((fieldName) => {
                           const field = fieldsByName[fieldName];
@@ -2164,8 +2396,8 @@ export default function LoyaltySettingsPage() {
                               <s-number-field
                                 label={field.label}
                                 name={field.name}
-                                min="1"
-                                step="1"
+                                min={1}
+                                step={1}
                                 inputMode="numeric"
                                 value={getSettingValue(values, field.name)}
                                 suffix={field.suffix}
@@ -2220,11 +2452,7 @@ export default function LoyaltySettingsPage() {
                           label="Points lifetime"
                           name="pointsExpiryValue"
                           min="1"
-                          max={
-                            pointsExpiryUnit === "days"
-                              ? "3650"
-                              : "120"
-                          }
+                          max={pointsExpiryUnit === "days" ? "3650" : "120"}
                           step="1"
                           inputMode="numeric"
                           value={getSettingValue(values, "pointsExpiryValue")}
@@ -2284,7 +2512,59 @@ export default function LoyaltySettingsPage() {
                           </small>
                         </span>
                       </label>
+                    </s-stack>
+                  </section>
 
+                  <section className="rule-section">
+                    <s-stack gap="base">
+                      <div className="rule-section-header">
+                        <div>
+                          <h3>Email notifications</h3>
+                          <p>
+                            Choose which loyalty events queue customer emails.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="redemption-toggle">
+                        <input
+                          id="emailNotificationsEnabled"
+                          type="checkbox"
+                          name="emailNotificationsEnabled"
+                          value="true"
+                          defaultChecked={emailNotificationsEnabled}
+                        />
+                        <div>
+                          <label htmlFor="emailNotificationsEnabled">
+                            Enable loyalty emails
+                          </label>
+                          <p>
+                            Customer emails are queued by loyalty events and
+                            sent by the email dispatcher.
+                          </p>
+                        </div>
+                        <span>{emailNotificationsEnabled ? "On" : "Off"}</span>
+                      </div>
+
+                      <div className="email-toggle-grid">
+                        {EMAIL_NOTIFICATION_FIELDS.map((field) => (
+                          <label className="email-toggle" key={field.name}>
+                            <input
+                              type="checkbox"
+                              name={field.name}
+                              value="true"
+                              defaultChecked={getEmailSettingValue(
+                                currentEmailSettings,
+                                field.name,
+                              )}
+                            />
+                            <span>
+                              <strong>{field.label}</strong>
+                              <small>{field.description}</small>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
                     </s-stack>
                   </section>
 
@@ -2904,6 +3184,50 @@ const settingsStyles = `
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .email-toggle-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .email-toggle {
+    align-items: start;
+    background: #ffffff;
+    border: 1px solid #e3e5e8;
+    border-radius: 8px;
+    cursor: pointer;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .email-toggle input {
+    accent-color: #008060;
+    height: 18px;
+    margin-block-start: 2px;
+    width: 18px;
+  }
+
+  .email-toggle strong,
+  .email-toggle small {
+    display: block;
+  }
+
+  .email-toggle strong {
+    color: #202223;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 20px;
+  }
+
+  .email-toggle small {
+    color: #616a75;
+    font-size: 12px;
+    line-height: 16px;
+    margin-block-start: 2px;
+  }
+
   .expiry-unit-field {
     display: grid;
     gap: 6px;
@@ -3497,6 +3821,7 @@ const settingsStyles = `
     .hero-summary,
     .iframe-text-grid,
     .iframe-font-grid,
+    .email-toggle-grid,
     .reward-type-options,
     .summary-strip {
       grid-template-columns: 1fr;

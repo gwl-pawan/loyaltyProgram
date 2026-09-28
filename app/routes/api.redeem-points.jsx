@@ -19,6 +19,8 @@ import {
   parseJsonRequest,
   runShopifyGraphql,
 } from "../services/errors.server";
+import { tryQueueAndDispatchLoyaltyEmail } from "../services/email-delivery.server";
+import { LOYALTY_EMAIL_EVENTS } from "../services/email-notifications.server";
 import { normalizeCheckoutReward } from "../services/checkout-reward.js";
 import { tryExpireCustomerPoints } from "../services/points-expiry.server.js";
 
@@ -833,6 +835,31 @@ export const action = async ({ request }) => {
 
       return createdReward;
     });
+
+    if (customer.email) {
+      await tryQueueAndDispatchLoyaltyEmail({
+        shopId: customer.shop.id,
+        customerId: customer.id,
+        eventType: LOYALTY_EMAIL_EVENTS.REWARD_CREATED,
+        recipientEmail: customer.email,
+        recipientName: customer.name,
+        subject:
+          rewardTypeForStorage === "store_credit"
+            ? "Store credit added to your account"
+            : "Your loyalty reward is ready",
+        payload: {
+          rewardType: rewardTypeForStorage,
+          rewardCode: issuedReward.rewardCode,
+          amount: issuedReward.amount,
+          currencyCode: issuedReward.currencyCode,
+          pointsUsed: redeemPoints,
+          status: reward.status,
+          expiresAt,
+          shopDomain: customer.shop.shopDomain,
+        },
+        idempotencyKey: `reward-created:${customer.shop.id}:${reward.id}`,
+      });
+    }
 
     return Response.json(
       {

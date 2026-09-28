@@ -56,6 +56,11 @@ export const DEFAULT_LOYALTY_SETTINGS = {
   referralProgramEnabled: true,
   referralAdvocatePoints: 200,
   referralFriendPoints: 100,
+  referralAttributionDays: 30,
+  birthdayRewardEnabled: false,
+  birthdayRewardPoints: 250,
+  birthdayRewardMinimumLeadDays: 30,
+  birthdayRewardTimeZone: "UTC",
   // Checkout UI Text Settings
   checkoutLoginMessage: "Sign in to use loyalty points.",
   checkoutDescription: "You have {coupon_amount} available {reward_label}",

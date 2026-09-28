@@ -2,10 +2,6 @@ import { runShopifyGraphql } from "./errors.server";
 
 const ORDER_WEBHOOKS = [
   {
-    topic: "ORDERS_CREATE",
-    path: "/webhooks/orders/create",
-  },
-  {
     topic: "ORDERS_PAID",
     path: "/webhooks/orders/paid",
   },

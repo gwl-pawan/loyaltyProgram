@@ -14,6 +14,141 @@
     height: "min(720px, 100vh)",
   };
 
+  async function readJsonResponse(response, fallbackMessage) {
+    const text = await response.text();
+    let data;
+
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(fallbackMessage);
+    }
+
+    if (!response.ok || !data || typeof data !== "object") {
+      throw new Error(data?.message || fallbackMessage);
+    }
+
+    return data;
+  }
+
+  async function updateReferralCartAttribute(wrapper, visitorToken) {
+    const endpoint = wrapper.dataset.cartUpdateUrl || "/cart/update.js";
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        attributes: {
+          __loyalty_referral_token: visitorToken || "",
+        },
+      }),
+    });
+
+    if (!response.ok) throw new Error("Could not persist referral on cart");
+  }
+
+  async function captureReferral(wrapper) {
+    if (wrapper.dataset.loyaltyReferralCaptureStatus) return;
+    wrapper.dataset.loyaltyReferralCaptureStatus = "loading";
+
+    const dataset = wrapper.dataset;
+    const shopDomain = dataset.shopDomain;
+    if (!shopDomain) {
+      wrapper.dataset.loyaltyReferralCaptureStatus = "unavailable";
+      return;
+    }
+
+    const storageKey = `loyalty-referral:${shopDomain}`;
+    const code = new URL(window.location.href).searchParams.get("ref");
+    let visit;
+
+    try {
+      visit = JSON.parse(window.localStorage.getItem(storageKey) || "null");
+    } catch {
+      visit = null;
+    }
+
+    if (visit?.expiresAt && new Date(visit.expiresAt).getTime() <= Date.now()) {
+      window.localStorage.removeItem(storageKey);
+      visit = null;
+    }
+
+    if (code && (!visit || visit.code !== code)) {
+      visit = {
+        code,
+        visitorToken:
+          window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+      };
+      window.localStorage.setItem(storageKey, JSON.stringify(visit));
+    }
+
+    if (!visit?.visitorToken) {
+      wrapper.dataset.loyaltyReferralCaptureStatus = "empty";
+      return;
+    }
+
+    const endpoint = `${(dataset.apiBaseUrl || "/apps/loyalty-points").replace(/\/$/, "")}/api/referrals`;
+
+    try {
+      if (code) {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            action: "track",
+            code: visit.code,
+            visitorToken: visit.visitorToken,
+            landingUrl: window.location.href,
+          }),
+        });
+        const result = await readJsonResponse(
+          response,
+          "Could not track referral",
+        );
+
+        if (!result.tracked) {
+          window.localStorage.removeItem(storageKey);
+          wrapper.dataset.loyaltyReferralCaptureStatus = "rejected";
+          return;
+        }
+
+        if (result.expiresAt) {
+          visit.expiresAt = result.expiresAt;
+          window.localStorage.setItem(storageKey, JSON.stringify(visit));
+        }
+      }
+
+      await updateReferralCartAttribute(wrapper, visit.visitorToken);
+
+      if (dataset.customerId) {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            action: "claim",
+            visitorToken: visit.visitorToken,
+          }),
+        });
+        const result = await readJsonResponse(
+          response,
+          "Could not claim referral",
+        );
+
+        if (result.claimed) {
+          await updateReferralCartAttribute(wrapper, "");
+          window.localStorage.removeItem(storageKey);
+        }
+      }
+
+      wrapper.dataset.loyaltyReferralCaptureStatus = "complete";
+    } catch (error) {
+      wrapper.dataset.loyaltyReferralCaptureStatus = "failed";
+      console.warn("[loyalty-referrals] Could not capture referral", error);
+    }
+  }
+
   function setImportantStyles(element, styles) {
     Object.entries(styles).forEach(([property, value]) => {
       element.style.setProperty(property, value, "important");
@@ -74,6 +209,7 @@
       document.body.appendChild(wrapper);
     }
 
+    captureReferral(wrapper);
     applyLayout(wrapper);
   }
 

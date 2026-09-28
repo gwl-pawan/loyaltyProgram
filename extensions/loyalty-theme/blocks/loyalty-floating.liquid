@@ -20,6 +20,10 @@
   data-loyalty-iframe-wrapper
   data-loyalty-floating-wrapper
   data-loyalty-global-floating="true"
+  data-api-base-url="/apps/loyalty-points"
+  data-cart-update-url="{{ routes.cart_url | append: '/update.js' | escape }}"
+  data-shop-domain="{{ shop.permanent_domain | escape }}"
+  data-customer-id="{{ customer_id }}"
   data-display-mode="floating_iframe"
 >
   <iframe

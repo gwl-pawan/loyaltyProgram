@@ -10,9 +10,13 @@ import {
 } from 'react-router';
 import {
   loadCustomerId,
+  deleteBirthdayProfile,
+  loadBirthdayProfile,
   loadLoyaltyBalance,
   loadLoyaltyHistory,
+  loadReferralProfile,
   redeemLoyaltyReward,
+  saveBirthdayProfile,
 } from '~/lib/loyalty';
 
 const REWARD_HISTORY_PAGE_SIZE = 8;
@@ -40,8 +44,15 @@ export async function action({request, context}) {
   const {customerAccount} = context;
   const form = await request.formData();
 
-  if (request.method === 'POST' && form.get('loyaltyAction') === 'store-credit') {
+  if (
+    request.method === 'POST' &&
+    form.get('loyaltyAction') === 'store-credit'
+  ) {
     return redeemAccountStoreCredit({context, customerAccount, form});
+  }
+
+  if (request.method === 'POST' && form.get('loyaltyAction') === 'birthday') {
+    return updateAccountBirthday({context, customerAccount, form});
   }
 
   if (request.method !== 'PUT') {
@@ -96,18 +107,23 @@ export async function action({request, context}) {
 
 export default function AccountProfile() {
   const account = useOutletContext();
-  const {loyalty, history} = useLoaderData();
+  const {loyalty, history, referral, birthday} = useLoaderData();
   const navigation = useNavigation();
   /** @type {ActionReturnData} */
   const action = useActionData();
   const profileAction = action?.actionType === 'profile' ? action : null;
   const loyaltyAction = action?.actionType === 'loyalty' ? action : null;
+  const birthdayAction = action?.actionType === 'birthday' ? action : null;
   const customer = profileAction?.customer ?? account?.customer;
   const isProfileSubmitting =
-    navigation.state !== 'idle' && navigation.formMethod?.toUpperCase() === 'PUT';
+    navigation.state !== 'idle' &&
+    navigation.formMethod?.toUpperCase() === 'PUT';
   const isLoyaltySubmitting =
     navigation.state !== 'idle' &&
     navigation.formData?.get('loyaltyAction') === 'store-credit';
+  const isBirthdaySubmitting =
+    navigation.state !== 'idle' &&
+    navigation.formData?.get('loyaltyAction') === 'birthday';
 
   return (
     <div className="account-profile">
@@ -157,10 +173,17 @@ export default function AccountProfile() {
             {isProfileSubmitting ? 'Updating' : 'Update profile'}
           </button>
         </Form>
+        <AccountBirthdayForm
+          birthday={birthdayAction?.birthday || birthday}
+          message={birthdayAction?.message}
+          success={birthdayAction?.success}
+          isSubmitting={isBirthdaySubmitting}
+        />
       </section>
       <AccountLoyaltyPanel
         loyalty={loyalty}
         history={history}
+        referral={referral}
         actionMessage={loyaltyAction?.message}
         actionSuccess={loyaltyAction?.success}
         isSubmitting={isLoyaltySubmitting}
@@ -182,13 +205,18 @@ async function loadAccountLoyaltyData(context) {
           message: 'Sign in to view loyalty points.',
         },
         history: [],
+        referral: null,
+        birthday: null,
       };
     }
 
-    const [loyaltyResult, historyResult] = await Promise.allSettled([
-      loadLoyaltyBalance(context, customerId),
-      loadLoyaltyHistory(context, customerId),
-    ]);
+    const [loyaltyResult, historyResult, referralResult, birthdayResult] =
+      await Promise.allSettled([
+        loadLoyaltyBalance(context, customerId),
+        loadLoyaltyHistory(context, customerId),
+        loadReferralProfile(context, customerId),
+        loadBirthdayProfile(context, customerId),
+      ]);
     const loyalty =
       loyaltyResult.status === 'fulfilled'
         ? loyaltyResult.value
@@ -201,10 +229,23 @@ async function loadAccountLoyaltyData(context) {
               'Could not load loyalty balance.',
           };
     const history =
-      historyResult.status === 'fulfilled' ? historyResult.value?.history || [] : [];
+      historyResult.status === 'fulfilled'
+        ? historyResult.value?.history || []
+        : [];
+    const referral =
+      referralResult.status === 'fulfilled'
+        ? referralResult.value?.referral || null
+        : null;
+    const birthday =
+      birthdayResult.status === 'fulfilled'
+        ? birthdayResult.value?.birthday || null
+        : null;
 
     if (historyResult.status === 'rejected') {
-      console.error('[hydrogen-account-loyalty] Could not load history', historyResult.reason);
+      console.error(
+        '[hydrogen-account-loyalty] Could not load history',
+        historyResult.reason,
+      );
     }
 
     return {
@@ -214,9 +255,14 @@ async function loadAccountLoyaltyData(context) {
         isLoggedIn: true,
       },
       history,
+      referral,
+      birthday,
     };
   } catch (error) {
-    console.error('[hydrogen-account-loyalty] Could not load account panel', error);
+    console.error(
+      '[hydrogen-account-loyalty] Could not load account panel',
+      error,
+    );
 
     return {
       loyalty: {
@@ -228,8 +274,147 @@ async function loadAccountLoyaltyData(context) {
         message: error?.message || 'Could not load loyalty rewards.',
       },
       history: [],
+      referral: null,
+      birthday: null,
     };
   }
+}
+
+async function updateAccountBirthday({context, customerAccount, form}) {
+  try {
+    const customerId = await loadCustomerId(customerAccount);
+    if (!customerId) {
+      return data(
+        {actionType: 'birthday', success: false, message: 'Sign in first.'},
+        {status: 401},
+      );
+    }
+
+    const result =
+      form.get('birthdayIntent') === 'delete'
+        ? await deleteBirthdayProfile(context, customerId)
+        : await saveBirthdayProfile(context, customerId, {
+            month: Number(form.get('birthMonth')),
+            day: Number(form.get('birthDay')),
+          });
+
+    return data({
+      actionType: 'birthday',
+      success: true,
+      message:
+        form.get('birthdayIntent') === 'delete'
+          ? 'Birthday removed.'
+          : 'Birthday saved for annual rewards.',
+      birthday: result.birthday,
+    });
+  } catch (error) {
+    return data(
+      {
+        actionType: 'birthday',
+        success: false,
+        message: error?.message || 'Could not save birthday.',
+      },
+      {status: 400},
+    );
+  }
+}
+
+function AccountBirthdayForm({birthday, message, success, isSubmitting}) {
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+
+  return (
+    <div className="account-profile__birthday">
+      <div className="account-section-heading">
+        <span>Loyalty</span>
+        <h2>Birthday reward</h2>
+      </div>
+      {birthday?.enabled ? (
+        <div className="account-profile__form">
+          <p>
+            Add your birth month and day to receive {birthday.points} points
+            once a year. Enter it at least {birthday.minimumLeadDays} days
+            before the reward date. It is locked after the first save.
+          </p>
+          <small>{birthday.privacy}</small>
+          {message ? (
+            <p className={success ? undefined : 'account-profile__error'}>
+              <small>{message}</small>
+            </p>
+          ) : null}
+          {birthday.birthday ? (
+            <>
+              <p>
+                <strong>Saved birthday: {birthday.birthday.label}</strong>
+              </p>
+              <p>{birthday.correctionMessage}</p>
+              <Form method="POST" className="account-profile__actions">
+                <input type="hidden" name="loyaltyAction" value="birthday" />
+                <input type="hidden" name="birthdayIntent" value="delete" />
+                <button type="submit" disabled={isSubmitting}>
+                  Remove birthday
+                </button>
+              </Form>
+            </>
+          ) : birthday.canSetBirthday ? (
+            <Form method="POST" className="account-profile__form">
+              <input type="hidden" name="loyaltyAction" value="birthday" />
+              <div className="account-profile__fields">
+                <label htmlFor="birthMonth">
+                  Birth month
+                  <select id="birthMonth" name="birthMonth" required>
+                    <option value="">Select month</option>
+                    {months.map((month, index) => (
+                      <option key={month} value={index + 1}>
+                        {month}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label htmlFor="birthDay">
+                  Birth day
+                  <select id="birthDay" name="birthDay" required>
+                    <option value="">Select day</option>
+                    {Array.from({length: 31}, (_, index) => index + 1).map(
+                      (day) => (
+                        <option key={day} value={day}>
+                          {day}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+              </div>
+              <div className="account-profile__actions">
+                <button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? 'Saving' : 'Save birthday once'}
+                </button>
+              </div>
+            </Form>
+          ) : (
+            <>
+              <p>Your saved birthday has been removed.</p>
+              <p>{birthday.correctionMessage}</p>
+            </>
+          )}
+        </div>
+      ) : (
+        <p>Birthday rewards are currently unavailable.</p>
+      )}
+    </div>
+  );
 }
 
 async function redeemAccountStoreCredit({context, customerAccount, form}) {
@@ -276,7 +461,10 @@ async function redeemAccountStoreCredit({context, customerAccount, form}) {
         )}`,
     });
   } catch (error) {
-    console.error('[hydrogen-account-loyalty] Could not redeem store credit', error);
+    console.error(
+      '[hydrogen-account-loyalty] Could not redeem store credit',
+      error,
+    );
 
     return data(
       {
@@ -292,12 +480,15 @@ async function redeemAccountStoreCredit({context, customerAccount, form}) {
 function AccountLoyaltyPanel({
   loyalty,
   history,
+  referral,
   actionMessage,
   actionSuccess,
   isSubmitting,
 }) {
   const [activeTab, setActiveTab] = useState('store-credit');
-  const storeCreditReward = normalizeStoreCreditReward(loyalty?.storeCreditReward);
+  const storeCreditReward = normalizeStoreCreditReward(
+    loyalty?.storeCreditReward,
+  );
   const defaultStoreCreditPoints = storeCreditReward?.points;
   const points = Number(loyalty?.loyaltyPoints || 0);
   const pointStep = storeCreditReward?.points || 100;
@@ -309,7 +500,9 @@ function AccountLoyaltyPanel({
   );
 
   useEffect(() => {
-    setPointsToConvert(defaultStoreCreditPoints ? String(defaultStoreCreditPoints) : '');
+    setPointsToConvert(
+      defaultStoreCreditPoints ? String(defaultStoreCreditPoints) : '',
+    );
   }, [defaultStoreCreditPoints]);
 
   const selectedPoints = Number(pointsToConvert);
@@ -399,6 +592,15 @@ function AccountLoyaltyPanel({
           >
             Reward history
           </button>
+          <button
+            type="button"
+            role="tab"
+            className={activeTab === 'referrals' ? 'is-active' : ''}
+            aria-selected={activeTab === 'referrals'}
+            onClick={() => setActiveTab('referrals')}
+          >
+            Refer a friend
+          </button>
         </div>
       </div>
 
@@ -408,7 +610,9 @@ function AccountLoyaltyPanel({
         <div className="account-loyalty__panel">
           <div className="account-loyalty__balance-card">
             <div className="account-loyalty__balance-head">
-              <span>{loyalty?.accountAvailableLabel || 'Available points'}</span>
+              <span>
+                {loyalty?.accountAvailableLabel || 'Available points'}
+              </span>
               <h3>{loyalty?.accountBalanceTitle || 'Loyalty balance'}</h3>
             </div>
             <p className="account-loyalty__points">
@@ -418,11 +622,15 @@ function AccountLoyaltyPanel({
             <div className="account-loyalty__mini-stats">
               <div className="account-loyalty__stat account-loyalty__stat--primary">
                 <span>Ready to convert</span>
-                <strong>{formatCurrency(convertibleCreditAmount, currencyCode)}</strong>
+                <strong>
+                  {formatCurrency(convertibleCreditAmount, currencyCode)}
+                </strong>
               </div>
               <div className="account-loyalty__stat">
                 <span>Current store credit</span>
-                <strong>{formatCurrency(storeCreditBalance, currencyCode)}</strong>
+                <strong>
+                  {formatCurrency(storeCreditBalance, currencyCode)}
+                </strong>
               </div>
               {storeCreditReward ? (
                 <div className="account-loyalty__stat">
@@ -437,16 +645,25 @@ function AccountLoyaltyPanel({
             <div className="account-loyalty__convert-card">
               <div className="account-loyalty__convert-copy">
                 <div>
-                  <h3>{loyalty?.accountStoreCreditTitle || 'Store Credit Reward'}</h3>
+                  <h3>
+                    {loyalty?.accountStoreCreditTitle || 'Store Credit Reward'}
+                  </h3>
                   <p>{conversionText}</p>
                 </div>
                 <span className="account-loyalty__credit-pill">
-                  Available store credit: {formatCurrency(storeCreditBalance, currencyCode)}
+                  Available store credit:{' '}
+                  {formatCurrency(storeCreditBalance, currencyCode)}
                 </span>
               </div>
               <Form method="post" className="account-loyalty__redeem-form">
-                <input type="hidden" name="loyaltyAction" value="store-credit" />
-                <label htmlFor="account-loyalty-points">Points to convert</label>
+                <input
+                  type="hidden"
+                  name="loyaltyAction"
+                  value="store-credit"
+                />
+                <label htmlFor="account-loyalty-points">
+                  Points to convert
+                </label>
                 <div className="account-loyalty__converter">
                   <button
                     type="button"
@@ -486,7 +703,9 @@ function AccountLoyaltyPanel({
                 </div>
                 <div className="account-loyalty__preview">
                   <span>Store credit value</span>
-                  <strong>{formatCurrency(selectedCreditAmount, currencyCode)}</strong>
+                  <strong>
+                    {formatCurrency(selectedCreditAmount, currencyCode)}
+                  </strong>
                 </div>
                 <button
                   className="account-loyalty__submit"
@@ -511,8 +730,35 @@ function AccountLoyaltyPanel({
             </div>
           )}
         </div>
-      ) : (
+      ) : activeTab === 'history' ? (
         <RewardHistory history={history} currencyCode={currencyCode} />
+      ) : (
+        <div className="account-loyalty__convert-card">
+          <h3>Refer a friend</h3>
+          {referral?.enabled ? (
+            <>
+              <p>
+                Share your link. You earn {referral.advocatePoints} points and
+                your friend earns {referral.friendPoints} points after their
+                first paid order.
+              </p>
+              <label htmlFor="account-referral-link">Your referral link</label>
+              <input
+                id="account-referral-link"
+                type="text"
+                readOnly
+                value={referral.link}
+                onFocus={(event) => event.currentTarget.select()}
+              />
+              <p>
+                {referral.successfulReferrals} successful referral
+                {referral.successfulReferrals === 1 ? '' : 's'}
+              </p>
+            </>
+          ) : (
+            <p>The referral program is currently unavailable.</p>
+          )}
+        </div>
       )}
     </section>
   );
@@ -521,7 +767,10 @@ function AccountLoyaltyPanel({
 function RewardHistory({history, currencyCode}) {
   const rows = useMemo(() => history || [], [history]);
   const [page, setPage] = useState(1);
-  const pageCount = Math.max(1, Math.ceil(rows.length / REWARD_HISTORY_PAGE_SIZE));
+  const pageCount = Math.max(
+    1,
+    Math.ceil(rows.length / REWARD_HISTORY_PAGE_SIZE),
+  );
   const safePage = Math.min(page, pageCount);
   const pageStart = (safePage - 1) * REWARD_HISTORY_PAGE_SIZE;
   const pageRows = rows.slice(pageStart, pageStart + REWARD_HISTORY_PAGE_SIZE);
@@ -536,7 +785,9 @@ function RewardHistory({history, currencyCode}) {
     return (
       <div className="account-loyalty__empty">
         <h3>No reward history</h3>
-        <p>Your earned points, redemptions, and reward updates will appear here.</p>
+        <p>
+          Your earned points, redemptions, and reward updates will appear here.
+        </p>
       </div>
     );
   }
@@ -600,8 +851,13 @@ function RewardHistory({history, currencyCode}) {
                   <td data-label="Amount">
                     {formatAmount(item.discountAmount, currencyCode)}
                   </td>
-                  <td data-label="Order">{item.orderName || item.orderId || '-'}</td>
-                  <td data-label="Message" className="account-loyalty__history-message">
+                  <td data-label="Order">
+                    {item.orderName || item.orderId || '-'}
+                  </td>
+                  <td
+                    data-label="Message"
+                    className="account-loyalty__history-message"
+                  >
                     {item.message || '-'}
                   </td>
                   <td data-label="Time">{formatDate(item.createdAt)}</td>
@@ -620,7 +876,9 @@ function RewardHistory({history, currencyCode}) {
             <button
               type="button"
               disabled={safePage === 1}
-              onClick={() => setPage((currentPage) => Math.max(currentPage - 1, 1))}
+              onClick={() =>
+                setPage((currentPage) => Math.max(currentPage - 1, 1))
+              }
             >
               Previous
             </button>

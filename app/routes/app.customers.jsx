@@ -18,6 +18,7 @@ import {
   normalizeSegmentationRules,
   segmentCustomers,
 } from "../services/customer-segmentation.shared";
+import { formatBirthday } from "../services/birthday-rewards.shared";
 
 function parseSelectedCustomerIds(formData) {
   return formData
@@ -446,7 +447,12 @@ export const action = async ({ request }) => {
   const actionType = formData.get("actionType");
 
   if (
-    !["bulkPoints", "csvBulkPoints", "refreshSegments"].includes(actionType)
+    ![
+      "birthdayReset",
+      "bulkPoints",
+      "csvBulkPoints",
+      "refreshSegments",
+    ].includes(actionType)
   ) {
     return Response.json(
       {
@@ -474,6 +480,43 @@ export const action = async ({ request }) => {
       },
       { status: 404 },
     );
+  }
+
+  if (actionType === "birthdayReset") {
+    const customerId = Number(formData.get("customerId"));
+
+    if (!Number.isInteger(customerId) || customerId < 1) {
+      return Response.json(
+        { success: false, message: "Choose a valid customer." },
+        { status: 400 },
+      );
+    }
+
+    const result = await prisma.customer.updateMany({
+      where: {
+        id: customerId,
+        shopId: shop.id,
+      },
+      data: {
+        birthMonth: null,
+        birthDay: null,
+        birthdayProvidedAt: null,
+        birthdayUpdatedAt: null,
+      },
+    });
+
+    if (result.count !== 1) {
+      return Response.json(
+        { success: false, message: "Customer was not found." },
+        { status: 404 },
+      );
+    }
+
+    return Response.json({
+      success: true,
+      message:
+        "Birthday entry reset. The customer can now enter it once again; annual reward history was preserved.",
+    });
   }
 
   if (actionType === "refreshSegments") {
@@ -710,7 +753,8 @@ export default function CustomersPage() {
   });
   const isSubmitting = navigation.state === "submitting";
   const isRefreshingSegments =
-    isSubmitting && navigation.formData?.get("actionType") === "refreshSegments";
+    isSubmitting &&
+    navigation.formData?.get("actionType") === "refreshSegments";
   const selectedCustomers = useMemo(
     () =>
       customers.filter((customer) => selectedCustomerIds.includes(customer.id)),
@@ -779,7 +823,9 @@ export default function CustomersPage() {
           <div>
             <span className="summary-label">Enrolled customers</span>
             <strong>{formatter.format(totalCustomers)}</strong>
-            <span className="summary-note">Customers in this loyalty store</span>
+            <span className="summary-note">
+              Customers in this loyalty store
+            </span>
           </div>
           <div>
             <span className="summary-label">Available points</span>
@@ -878,7 +924,11 @@ export default function CustomersPage() {
             </div>
           </Form>
 
-          <Form method="post" encType="multipart/form-data" className="csv-form">
+          <Form
+            method="post"
+            encType="multipart/form-data"
+            className="csv-form"
+          >
             <input type="hidden" name="actionType" value="csvBulkPoints" />
             <div className="csv-card">
               <div className="csv-copy">
@@ -939,14 +989,15 @@ export default function CustomersPage() {
 
           <div className="segment-rule-summary">
             <span>
-              VIP at {currencyFormatter.format(
+              VIP at{" "}
+              {currencyFormatter.format(
                 segmentationRules.vipSpendThreshold || 0,
               )}
             </span>
             <span>
-              Inactive after {formatter.format(
-                segmentationRules.inactiveCustomerDays || 0,
-              )} days
+              Inactive after{" "}
+              {formatter.format(segmentationRules.inactiveCustomerDays || 0)}{" "}
+              days
             </span>
             <span>
               Top {formatter.format(segmentationRules.topSpenderPercent || 0)}%
@@ -1014,6 +1065,7 @@ export default function CustomersPage() {
                     <th className="numeric">Points</th>
                     <th className="numeric">Transactions</th>
                     <th className="numeric">Rewards</th>
+                    <th>Birthday</th>
                     <th>Last activity</th>
                     <th>Joined</th>
                   </tr>
@@ -1076,6 +1128,60 @@ export default function CustomersPage() {
                       </td>
                       <td className="numeric">
                         {formatter.format(customer._count?.rewards || 0)}
+                      </td>
+                      <td className="secondary">
+                        <div className="birthday-admin-cell">
+                          <span>
+                            {customer.birthMonth && customer.birthDay
+                              ? formatBirthday(
+                                  customer.birthMonth,
+                                  customer.birthDay,
+                                )
+                              : customer.birthdayProvidedAt
+                                ? "Removed (locked)"
+                                : "Not provided"}
+                          </span>
+                          {customer.birthdayProvidedAt ||
+                          (customer.birthMonth && customer.birthDay) ? (
+                            <Form
+                              method="post"
+                              onSubmit={(event) => {
+                                if (
+                                  !window.confirm(
+                                    "Clear this birthday and allow the customer to enter it once again? Annual reward history will be preserved.",
+                                  )
+                                ) {
+                                  event.preventDefault();
+                                }
+                              }}
+                            >
+                              <input
+                                type="hidden"
+                                name="actionType"
+                                value="birthdayReset"
+                              />
+                              <input
+                                type="hidden"
+                                name="customerId"
+                                value={customer.id}
+                              />
+                              <button
+                                type="submit"
+                                className="birthday-reset-button"
+                                disabled={
+                                  isSubmitting &&
+                                  navigation.formData?.get("actionType") ===
+                                    "birthdayReset" &&
+                                  Number(
+                                    navigation.formData?.get("customerId"),
+                                  ) === customer.id
+                                }
+                              >
+                                Allow correction
+                              </button>
+                            </Form>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="secondary">
                         {formatNullableDate(getCustomerActivityDate(customer))}
@@ -1170,6 +1276,9 @@ const customerStyles = `
   .segment-badge { background: #eef7ff; border: 1px solid #b8dcff; border-radius: 999px; color: #005bd3; display: inline-flex; font-size: 11px; font-weight: 800; line-height: 14px; padding: 4px 8px; white-space: nowrap; }
   .segment-badge.muted { background: #f1f2f3; border-color: #d9dce0; color: #616a75; }
   .points-pill { display: inline-flex; min-width: 48px; justify-content: center; padding: 5px 12px; border-radius: 999px; background: #dff7ec; color: #006c48; font-weight: 800; }
+  .birthday-admin-cell { align-items: start; display: grid; gap: 6px; min-width: 128px; }
+  .birthday-reset-button { background: transparent; border: 0; color: #005bd3; cursor: pointer; font: inherit; padding: 0; text-align: left; text-decoration: underline; }
+  .birthday-reset-button:disabled { cursor: wait; opacity: .6; }
   .customer-empty-state { display: grid; justify-items: center; padding: 52px 24px 58px; text-align: center; }
   .empty-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 14px; border-radius: 50%; background: #f1f2f3; color: #616a75; font-size: 0; }
   .empty-icon::before { content: ""; width: 14px; height: 14px; border: 2px solid currentColor; border-radius: 50%; }

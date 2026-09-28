@@ -12,6 +12,8 @@ import {
   webhookAuthenticationError,
   webhookProcessingError,
 } from "../services/errors.server";
+import { tryQueueAndDispatchLoyaltyEmail } from "../services/email-delivery.server";
+import { LOYALTY_EMAIL_EVENTS } from "../services/email-notifications.server";
 
 function getOrderId(payload) {
   return String(
@@ -248,10 +250,11 @@ export const action = async ({ request }) => {
 
     const orderId = getOrderId(payload);
     const orderName = getOrderName(payload);
+    const refundId = getRefundId(payload);
     const refundMetric = await recordRefundMetric(
       customer.id,
       orderId,
-      getRefundId(payload),
+      refundId,
       refundAmount,
       getRefundDate(payload),
     );
@@ -286,6 +289,27 @@ export const action = async ({ request }) => {
           reason: "Refund Deduction",
         },
       });
+
+      if (customer.email) {
+        await tryQueueAndDispatchLoyaltyEmail({
+          shopId: loyaltyShop.id,
+          customerId: customer.id,
+          eventType: LOYALTY_EMAIL_EVENTS.REFUND_POINTS,
+          recipientEmail: customer.email,
+          recipientName: customer.name,
+          subject: `${pointsToDeduct} loyalty points were deducted after your refund`,
+          payload: {
+            pointsDeducted: pointsToDeduct,
+            refundAmount,
+            refundId,
+            orderId,
+            orderName,
+            shopDomain: shop,
+            customerId: customer.shopifyCustomerId,
+          },
+          idempotencyKey: `refund-points:${loyaltyShop.id}:${customer.id}:${refundId}`,
+        });
+      }
     }
 
     if (orderId) {
@@ -349,6 +373,28 @@ export const action = async ({ request }) => {
             },
           });
         });
+
+        if (customer.email) {
+          await tryQueueAndDispatchLoyaltyEmail({
+            shopId: loyaltyShop.id,
+            customerId: customer.id,
+            eventType: LOYALTY_EMAIL_EVENTS.REFUND_POINTS,
+            recipientEmail: customer.email,
+            recipientName: customer.name,
+            subject: `${reward.pointsUsed} loyalty points were returned`,
+            payload: {
+              pointsRefunded: reward.pointsUsed,
+              rewardCode: reward.rewardCode,
+              discountAmount: reward.discountAmount,
+              refundId,
+              orderId,
+              orderName,
+              shopDomain: shop,
+              customerId: customer.shopifyCustomerId,
+            },
+            idempotencyKey: `reward-points-refunded:${loyaltyShop.id}:${reward.id}:${refundId}`,
+          });
+        }
       }
     }
 

@@ -137,6 +137,18 @@ function getShopifyId(value) {
   return value ? String(value).split("/").pop() : "";
 }
 
+/** @param {any} event */
+function getFormControlValue(event) {
+  const inputSource = event.composedPath?.()[0];
+  return String(
+    inputSource?.value ??
+      event.detail?.value ??
+      event.target?.value ??
+      event.currentTarget?.value ??
+      "",
+  );
+}
+
 function normalizeStoreCreditReward(reward) {
   const points = Number(reward?.points);
   const amount = Number(reward?.amount);
@@ -306,6 +318,11 @@ export function CustomerAccountLoyaltyPoints() {
   const [apiTextSettings, setApiTextSettings] = useState({});
   const [activeTab, setActiveTab] = useState("balance");
   const [history, setHistory] = useState([]);
+  const [referral, setReferral] = useState(null);
+  const [birthday, setBirthday] = useState(null);
+  const [birthdayMonth, setBirthdayMonth] = useState("");
+  const [birthdayDay, setBirthdayDay] = useState("");
+  const [isSavingBirthday, setIsSavingBirthday] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
   const [storeCreditHistoryPage, setStoreCreditHistoryPage] = useState(1);
@@ -515,6 +532,107 @@ export function CustomerAccountLoyaltyPoints() {
     loginMessage,
     proxyShopDomain,
   ]);
+
+  useEffect(() => {
+    if (isResolvingProxyBaseUrl || !customer?.id || apiBaseUrls.length === 0) {
+      setReferral(null);
+      return;
+    }
+
+    let isCurrent = true;
+
+    async function loadReferral() {
+      try {
+        const token = await shopify.sessionToken.get();
+        const data = await fetchApiJson(
+          buildApiUrls(apiBaseUrls, "customer-account/referrals"),
+          { headers: { Authorization: `Bearer ${token}` } },
+          "Could not load referral details.",
+        );
+
+        if (isCurrent) setReferral(data.referral || null);
+      } catch (error) {
+        console.error("Could not load referral details", error);
+        if (isCurrent) setReferral(null);
+      }
+    }
+
+    loadReferral();
+    return () => {
+      isCurrent = false;
+    };
+  }, [apiBaseUrls, apiBaseUrlsKey, customer?.id, isResolvingProxyBaseUrl]);
+
+  useEffect(() => {
+    if (isResolvingProxyBaseUrl || !customer?.id || apiBaseUrls.length === 0) {
+      setBirthday(null);
+      return;
+    }
+
+    let isCurrent = true;
+    async function loadBirthday() {
+      try {
+        const token = await shopify.sessionToken.get();
+        const data = await fetchApiJson(
+          buildApiUrls(apiBaseUrls, "customer-account/birthday"),
+          { headers: { Authorization: `Bearer ${token}` } },
+          "Could not load birthday details.",
+        );
+        if (!isCurrent) return;
+        setBirthday(data.birthday || null);
+        setBirthdayMonth(String(data.birthday?.birthday?.month || ""));
+        setBirthdayDay(String(data.birthday?.birthday?.day || ""));
+      } catch (error) {
+        console.error("Could not load birthday details", error);
+      }
+    }
+
+    loadBirthday();
+    return () => {
+      isCurrent = false;
+    };
+  }, [apiBaseUrls, apiBaseUrlsKey, customer?.id, isResolvingProxyBaseUrl]);
+
+  const saveBirthday = async (action = "save") => {
+    setIsSavingBirthday(true);
+    setMessage("");
+    try {
+      const token = await shopify.sessionToken.get();
+      const data = await fetchApiJson(
+        buildApiUrls(apiBaseUrls, "customer-account/birthday"),
+        {
+          method: action === "delete" ? "DELETE" : "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(
+            action === "delete"
+              ? { action: "delete" }
+              : {
+                  birthday: {
+                    month: Number(birthdayMonth),
+                    day: Number(birthdayDay),
+                  },
+                },
+          ),
+        },
+        "Could not save birthday.",
+      );
+      setBirthday(data.birthday || null);
+      setBirthdayMonth(String(data.birthday?.birthday?.month || ""));
+      setBirthdayDay(String(data.birthday?.birthday?.day || ""));
+      setMessage(
+        action === "delete"
+          ? "Birthday removed."
+          : "Birthday saved for annual rewards.",
+      );
+    } catch (error) {
+      setMessage(error.message || "Could not save birthday.");
+    } finally {
+      setIsSavingBirthday(false);
+    }
+  };
 
   const fetchHistory = useCallback(async () => {
     if (isResolvingProxyBaseUrl || !customer?.id) return;
@@ -814,6 +932,20 @@ export function CustomerAccountLoyaltyPoints() {
             onClick={() => setActiveTab("store-credit-history")}
           >
             Credit history
+          </s-button>
+          <s-button
+            slot="secondary-actions"
+            variant={activeTab === "referrals" ? "primary" : "secondary"}
+            onClick={() => setActiveTab("referrals")}
+          >
+            Refer a friend
+          </s-button>
+          <s-button
+            slot="secondary-actions"
+            variant={activeTab === "birthday" ? "primary" : "secondary"}
+            onClick={() => setActiveTab("birthday")}
+          >
+            Birthday reward
           </s-button>
           <s-button
             slot="secondary-actions"
@@ -1143,6 +1275,165 @@ export function CustomerAccountLoyaltyPoints() {
                   </s-grid>
                 ) : null}
               </s-stack>
+            )}
+          </s-stack>
+        ) : activeTab === "birthday" ? (
+          <s-stack gap="large">
+            <s-stack gap="none">
+              <s-heading>Birthday reward</s-heading>
+              <s-text color="subdued">
+                Add your birth month and day to receive an annual points gift.
+              </s-text>
+            </s-stack>
+            {birthday?.enabled ? (
+              <s-box background="subdued" padding="large" borderRadius="large">
+                <s-stack gap="base">
+                  <s-text>
+                    Earn {birthday.points} points once a year. Enter your
+                    birthday at least {birthday.minimumLeadDays} days in
+                    advance to qualify.
+                  </s-text>
+                  <s-text color="subdued">{birthday.privacy}</s-text>
+                  {birthday.birthday ? (
+                    <s-stack gap="base">
+                      <s-text type="strong">
+                        Saved birthday: {birthday.birthday.label}
+                        {birthday.lastIssuedYear
+                          ? ` · Last rewarded ${birthday.lastIssuedYear}`
+                          : ""}
+                      </s-text>
+                      <s-text color="subdued">
+                        {birthday.correctionMessage}
+                      </s-text>
+                      <s-button
+                        variant="secondary"
+                        tone="critical"
+                        disabled={isSavingBirthday}
+                        onClick={() => saveBirthday("delete")}
+                      >
+                        Remove birthday
+                      </s-button>
+                    </s-stack>
+                  ) : birthday.canSetBirthday ? (
+                    <s-stack gap="base">
+                      <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                        <s-select
+                          label="Birth month"
+                          value={birthdayMonth}
+                          onChange={(event) =>
+                            setBirthdayMonth(getFormControlValue(event))
+                          }
+                        >
+                          <s-option value="">Select month</s-option>
+                          {[
+                            "January",
+                            "February",
+                            "March",
+                            "April",
+                            "May",
+                            "June",
+                            "July",
+                            "August",
+                            "September",
+                            "October",
+                            "November",
+                            "December",
+                          ].map((month, index) => (
+                            <s-option key={month} value={String(index + 1)}>
+                              {month}
+                            </s-option>
+                          ))}
+                        </s-select>
+                        <s-select
+                          label="Birth day"
+                          value={birthdayDay}
+                          onChange={(event) =>
+                            setBirthdayDay(getFormControlValue(event))
+                          }
+                        >
+                          <s-option value="">Select day</s-option>
+                          {Array.from(
+                            { length: 31 },
+                            (_, index) => index + 1,
+                          ).map((day) => (
+                            <s-option key={day} value={String(day)}>
+                              {day}
+                            </s-option>
+                          ))}
+                        </s-select>
+                      </s-grid>
+                      <s-button
+                        variant="primary"
+                        loading={isSavingBirthday}
+                        disabled={
+                          isSavingBirthday || !birthdayMonth || !birthdayDay
+                        }
+                        onClick={() => saveBirthday("save")}
+                      >
+                        Save birthday once
+                      </s-button>
+                    </s-stack>
+                  ) : (
+                    <s-stack gap="small">
+                      <s-text>Your saved birthday has been removed.</s-text>
+                      <s-text color="subdued">
+                        {birthday.correctionMessage}
+                      </s-text>
+                    </s-stack>
+                  )}
+                </s-stack>
+              </s-box>
+            ) : (
+              <s-banner tone="info">
+                <s-text>Birthday rewards are currently unavailable.</s-text>
+              </s-banner>
+            )}
+          </s-stack>
+        ) : activeTab === "referrals" ? (
+          <s-stack gap="large">
+            <s-stack direction="inline" gap="small" alignItems="center">
+              <s-stack gap="none">
+                <s-heading>Refer a friend</s-heading>
+                <s-text color="subdued">
+                  Share your personal link and earn points together.
+                </s-text>
+              </s-stack>
+            </s-stack>
+
+            {referral?.enabled ? (
+              <s-box background="subdued" padding="large" borderRadius="large">
+                <s-stack gap="base">
+                  <s-text>
+                    You earn {referral.advocatePoints} points and your friend
+                    earns {referral.friendPoints} points after their first paid
+                    order.
+                  </s-text>
+                  <s-stack gap="small">
+                    <s-text>Your referral link</s-text>
+                    <s-stack direction="inline" gap="small" alignItems="center">
+                      <s-link href={referral.link}>{referral.link}</s-link>
+                      <s-button
+                        variant="secondary"
+                        commandFor="loyalty-referral-link"
+                      >
+                        Copy link
+                      </s-button>
+                    </s-stack>
+                  </s-stack>
+                  <s-clipboard-item
+                    id="loyalty-referral-link"
+                    text={referral.link}
+                  />
+                  <s-text color="subdued">
+                    {referral.successfulReferrals} successful referral
+                    {referral.successfulReferrals === 1 ? "" : "s"}
+                  </s-text>
+                </s-stack>
+              </s-box>
+            ) : (
+              <s-banner tone="info">
+                <s-text>The referral program is currently unavailable.</s-text>
+              </s-banner>
             )}
           </s-stack>
         ) : (

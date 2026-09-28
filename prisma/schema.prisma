@@ -35,9 +35,11 @@ model Shop {
   isPartnerDevelopment Boolean  @default(false)
   createdAt            DateTime @default(now())
 
-  customers      Customer[]
-  referrals      Referral[]
-  loyaltySetting LoyaltySetting?
+  customers                Customer[]
+  referrals                Referral[]
+  loyaltySetting           LoyaltySetting?
+  emailNotificationSetting EmailNotificationSetting?
+  emailNotifications       EmailNotification[]
 }
 
 model LoyaltySetting {
@@ -67,6 +69,11 @@ model LoyaltySetting {
   referralProgramEnabled       Boolean   @default(true)
   referralAdvocatePoints       Int       @default(200)
   referralFriendPoints         Int       @default(100)
+  referralAttributionDays      Int       @default(30)
+  birthdayRewardEnabled        Boolean   @default(false)
+  birthdayRewardPoints         Int       @default(250)
+  birthdayRewardMinimumLeadDays Int      @default(30)
+  birthdayRewardTimeZone       String    @default("UTC") @db.VarChar(100)
 
   // Checkout UI Text Settings
   checkoutLoginMessage        String @db.Text
@@ -140,15 +147,24 @@ model Customer {
   rewardActivityLogs RewardActivityLog[]
   orderMetrics       CustomerOrderMetric[]
   refundMetrics      CustomerRefundMetric[]
+  emailNotifications EmailNotification[]
   referralsMade      Referral[]             @relation("ReferralAdvocate")
   referredBy         Referral?              @relation("ReferralFriend")
 
   referralCode String?
 
+  birthMonth                  Int?
+  birthDay                    Int?
+  birthdayProvidedAt          DateTime?
+  birthdayUpdatedAt           DateTime?
+  birthdayRewardLastIssuedYear Int?
+  birthdayRewardLastIssuedAt   DateTime?
+
   @@unique([shopId, shopifyCustomerId])
   @@unique([shopId, referralCode])
   @@index([shopId, lifetimeSpend])
   @@index([shopId, lastActivityAt])
+  @@index([shopId, birthMonth, birthDay])
 }
 
 model Referral {
@@ -163,7 +179,7 @@ model Referral {
   referredCustomer   Customer? @relation("ReferralFriend", fields: [referredCustomerId], references: [id])
 
   referralCode     String
-  visitorToken     String    @unique
+  visitorToken     String
   status           String    @default("clicked")
   landingUrl       String?   @db.Text
   qualifiedOrderId String?
@@ -171,11 +187,13 @@ model Referral {
   claimedAt        DateTime?
   qualifiedAt      DateTime?
   rewardedAt       DateTime?
+  expiresAt        DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   @@unique([shopId, visitorToken])
   @@index([shopId, referralCode, status])
+  @@index([shopId, status, expiresAt])
   @@index([advocateCustomerId, createdAt])
 }
 
@@ -279,6 +297,56 @@ model RewardActivityLog {
   @@index([rewardId])
   @@index([rewardCode])
   @@index([activityType])
+}
+
+model EmailNotificationSetting {
+  id     Int  @id @default(autoincrement())
+  shopId Int  @unique
+  shop   Shop @relation(fields: [shopId], references: [id])
+
+  enabled              Boolean @default(true)
+  signupBonusEnabled   Boolean @default(true)
+  orderPointsEnabled   Boolean @default(true)
+  rewardCreatedEnabled Boolean @default(true)
+  rewardAppliedEnabled Boolean @default(true)
+  refundEnabled        Boolean @default(true)
+  pointsExpiryEnabled  Boolean @default(true)
+  referralEnabled      Boolean @default(true)
+  birthdayRewardEnabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EmailNotification {
+  id Int @id @default(autoincrement())
+
+  shopId Int
+  shop   Shop @relation(fields: [shopId], references: [id])
+
+  customerId Int?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
+  eventType      String
+  recipientEmail String
+  recipientName  String?
+  subject        String
+  payload        Json?
+
+  status         String  @default("pending")
+  provider       String?
+  providerId     String?
+  errorMessage   String? @db.Text
+  idempotencyKey String  @unique
+
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([shopId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([eventType])
+  @@index([status, createdAt])
 }
 
 model WebhookLog {

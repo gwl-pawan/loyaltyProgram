@@ -1,3 +1,21 @@
 {
-  "loyalty_points": "Loyalty points"
+  "loyalty_points": "Loyalty points",
+  "birthday": {
+    "heading": "Birthday reward",
+    "description": "Add your birth month and day to receive an annual points gift.",
+    "rule": "Earn {{ points }} points once a year. Enter your birthday at least {{ days }} days before the reward date. It is locked after the first save.",
+    "month": "Birth month",
+    "day": "Birth day",
+    "privacy": "Only your birth month and day are stored. Your birth year is not collected.",
+    "save": "Save birthday once",
+    "remove": "Remove birthday",
+    "saved_label": "Saved birthday: {{ birthday }}",
+    "correction": "Birthday can only be entered once. Contact store support if it needs to be corrected.",
+    "loading": "Updating birthday...",
+    "saved": "Birthday saved for annual rewards.",
+    "removed": "Birthday removed.",
+    "error": "Could not update your birthday. Please try again.",
+    "login_prompt": "Sign in to add your birthday.",
+    "login": "Sign in"
+  }
 }
