@@ -12,6 +12,7 @@ export const LOYALTY_EMAIL_EVENTS = {
   REFERRAL_CLAIMED: "referral_claimed",
   REFERRAL_REWARDED: "referral_rewarded",
   BIRTHDAY_REWARD: "birthday_reward",
+  SPECIAL_DATE_REWARD: "special_date_reward",
 };
 
 export { DEFAULT_EMAIL_NOTIFICATION_SETTINGS };
@@ -27,6 +28,7 @@ const EMAIL_EVENT_SETTING_FIELDS = {
   [LOYALTY_EMAIL_EVENTS.REFERRAL_CLAIMED]: "referralEnabled",
   [LOYALTY_EMAIL_EVENTS.REFERRAL_REWARDED]: "referralEnabled",
   [LOYALTY_EMAIL_EVENTS.BIRTHDAY_REWARD]: "birthdayRewardEnabled",
+  [LOYALTY_EMAIL_EVENTS.SPECIAL_DATE_REWARD]: "specialDateRewardEnabled",
 };
 
 function normalizeEmail(value) {

@@ -17,6 +17,9 @@ type Pages = {
   "/api/hydrogen/customer-reward-history": {
     params: {};
   };
+  "/api/customer-account/special-dates": {
+    params: {};
+  };
   "/api/email-notifications/dispatch": {
     params: {};
   };
@@ -33,6 +36,9 @@ type Pages = {
     params: {};
   };
   "/api/hydrogen/redeem-points": {
+    params: {};
+  };
+  "/api/hydrogen/special-dates": {
     params: {};
   };
   "/webhooks/app/scopes_update": {
@@ -98,6 +104,9 @@ type Pages = {
   "/api/redeem-points": {
     params: {};
   };
+  "/api/special-dates": {
+    params: {};
+  };
   "/api/test-order": {
     params: {};
   };
@@ -116,6 +125,9 @@ type Pages = {
     };
   };
   "/app": {
+    params: {};
+  };
+  "/app/email-templates": {
     params: {};
   };
   "/app/additional": {
@@ -138,11 +150,15 @@ type Pages = {
 type RouteFiles = {
   "root.jsx": {
     id: "root";
-    page: "/" | "/api/hydrogen/customer-reward-history" | "/api/email-notifications/dispatch" | "/api/customer-account/referrals" | "/api/customer-account/birthday" | "/api/hydrogen/loyalty-balance" | "/api/customer-reward-history" | "/api/hydrogen/redeem-points" | "/webhooks/app/scopes_update" | "/webhooks/customers/create" | "/webhooks/app/uninstalled" | "/webhooks/refunds/create" | "/api/hydrogen/referrals" | "/webhooks/orders/create" | "/api/hydrogen/birthday" | "/api/birthday-rewards" | "/webhooks/orders/paid" | "/api/loyalty-balance" | "/api/loyalty-balance/api/customer-account/referrals" | "/api/loyalty-balance/api/customer-account/birthday" | "/api/loyalty-balance/api/customer-reward-history" | "/api/loyalty-balance/api/redeem-points" | "/api/loyalty-balance/api/birthdays" | "/api/loyalty-balance/api/referrals" | "/api/loyalty-balance/iframe" | "/api/loyalty-program" | "/api/loyalty-iframe" | "/api/points-expiry" | "/api/redeem-points" | "/api/test-order" | "/api/birthdays" | "/api/referrals" | "/auth/login" | "/auth/*" | "/app" | "/app/additional" | "/app/customers" | "/app/referrals" | "/app/settings" | "/app/history";
+    page: "/" | "/api/hydrogen/customer-reward-history" | "/api/customer-account/special-dates" | "/api/email-notifications/dispatch" | "/api/customer-account/referrals" | "/api/customer-account/birthday" | "/api/hydrogen/loyalty-balance" | "/api/customer-reward-history" | "/api/hydrogen/redeem-points" | "/api/hydrogen/special-dates" | "/webhooks/app/scopes_update" | "/webhooks/customers/create" | "/webhooks/app/uninstalled" | "/webhooks/refunds/create" | "/api/hydrogen/referrals" | "/webhooks/orders/create" | "/api/hydrogen/birthday" | "/api/birthday-rewards" | "/webhooks/orders/paid" | "/api/loyalty-balance" | "/api/loyalty-balance/api/customer-account/referrals" | "/api/loyalty-balance/api/customer-account/birthday" | "/api/loyalty-balance/api/customer-reward-history" | "/api/loyalty-balance/api/redeem-points" | "/api/loyalty-balance/api/birthdays" | "/api/loyalty-balance/api/referrals" | "/api/loyalty-balance/iframe" | "/api/loyalty-program" | "/api/loyalty-iframe" | "/api/points-expiry" | "/api/redeem-points" | "/api/special-dates" | "/api/test-order" | "/api/birthdays" | "/api/referrals" | "/auth/login" | "/auth/*" | "/app" | "/app/email-templates" | "/app/additional" | "/app/customers" | "/app/referrals" | "/app/settings" | "/app/history";
   };
   "routes/api.hydrogen.customer-reward-history.jsx": {
     id: "routes/api.hydrogen.customer-reward-history";
     page: "/api/hydrogen/customer-reward-history";
+  };
+  "routes/api.customer-account.special-dates.jsx": {
+    id: "routes/api.customer-account.special-dates";
+    page: "/api/customer-account/special-dates";
   };
   "routes/api.email-notifications.dispatch.jsx": {
     id: "routes/api.email-notifications.dispatch";
@@ -167,6 +183,10 @@ type RouteFiles = {
   "routes/api.hydrogen.redeem-points.jsx": {
     id: "routes/api.hydrogen.redeem-points";
     page: "/api/hydrogen/redeem-points";
+  };
+  "routes/api.hydrogen.special-dates.jsx": {
+    id: "routes/api.hydrogen.special-dates";
+    page: "/api/hydrogen/special-dates";
   };
   "routes/webhooks.app.scopes_update.jsx": {
     id: "routes/webhooks.app.scopes_update";
@@ -252,6 +272,10 @@ type RouteFiles = {
     id: "routes/api.redeem-points";
     page: "/api/redeem-points";
   };
+  "routes/api.special-dates.jsx": {
+    id: "routes/api.special-dates";
+    page: "/api/special-dates";
+  };
   "routes/api.test-order.jsx": {
     id: "routes/api.test-order";
     page: "/api/test-order";
@@ -278,7 +302,11 @@ type RouteFiles = {
   };
   "routes/app.jsx": {
     id: "routes/app";
-    page: "/app" | "/app/additional" | "/app/customers" | "/app/referrals" | "/app/settings" | "/app/history";
+    page: "/app" | "/app/email-templates" | "/app/additional" | "/app/customers" | "/app/referrals" | "/app/settings" | "/app/history";
+  };
+  "routes/app.email-templates.jsx": {
+    id: "routes/app.email-templates";
+    page: "/app/email-templates";
   };
   "routes/app.additional.jsx": {
     id: "routes/app.additional";
@@ -309,12 +337,14 @@ type RouteFiles = {
 type RouteModules = {
   "root": typeof import("./app/root.jsx");
   "routes/api.hydrogen.customer-reward-history": typeof import("./app/routes/api.hydrogen.customer-reward-history.jsx");
+  "routes/api.customer-account.special-dates": typeof import("./app/routes/api.customer-account.special-dates.jsx");
   "routes/api.email-notifications.dispatch": typeof import("./app/routes/api.email-notifications.dispatch.jsx");
   "routes/api.customer-account.referrals": typeof import("./app/routes/api.customer-account.referrals.jsx");
   "routes/api.customer-account.birthday": typeof import("./app/routes/api.customer-account.birthday.jsx");
   "routes/api.hydrogen.loyalty-balance": typeof import("./app/routes/api.hydrogen.loyalty-balance.jsx");
   "routes/api.customer-reward-history": typeof import("./app/routes/api.customer-reward-history.jsx");
   "routes/api.hydrogen.redeem-points": typeof import("./app/routes/api.hydrogen.redeem-points.jsx");
+  "routes/api.hydrogen.special-dates": typeof import("./app/routes/api.hydrogen.special-dates.jsx");
   "routes/webhooks.app.scopes_update": typeof import("./app/routes/webhooks.app.scopes_update.jsx");
   "routes/webhooks.customers.create": typeof import("./app/routes/webhooks.customers.create.jsx");
   "routes/webhooks.app.uninstalled": typeof import("./app/routes/webhooks.app.uninstalled.jsx");
@@ -336,6 +366,7 @@ type RouteModules = {
   "routes/api.loyalty-iframe": typeof import("./app/routes/api.loyalty-iframe.jsx");
   "routes/api.points-expiry": typeof import("./app/routes/api.points-expiry.jsx");
   "routes/api.redeem-points": typeof import("./app/routes/api.redeem-points.jsx");
+  "routes/api.special-dates": typeof import("./app/routes/api.special-dates.jsx");
   "routes/api.test-order": typeof import("./app/routes/api.test-order.jsx");
   "routes/api.birthdays": typeof import("./app/routes/api.birthdays.jsx");
   "routes/api.referrals": typeof import("./app/routes/api.referrals.jsx");
@@ -343,6 +374,7 @@ type RouteModules = {
   "routes/_index": typeof import("./app/routes/_index/route.jsx");
   "routes/auth.$": typeof import("./app/routes/auth.$.jsx");
   "routes/app": typeof import("./app/routes/app.jsx");
+  "routes/app.email-templates": typeof import("./app/routes/app.email-templates.jsx");
   "routes/app.additional": typeof import("./app/routes/app.additional.jsx");
   "routes/app.customers": typeof import("./app/routes/app.customers.jsx");
   "routes/app.referrals": typeof import("./app/routes/app.referrals.jsx");

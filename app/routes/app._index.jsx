@@ -163,15 +163,95 @@ export default function Dashboard() {
     1,
     ...analytics.redemptions.trend.map((bucket) => bucket.redemptions),
   );
-  const maximumRewardMix = Math.max(
+  const trendGridSteps = Math.min(4, maximumTrendRedemptions);
+  const trendGridRatios = Array.from(
+    { length: trendGridSteps + 1 },
+    (_, index) => index / trendGridSteps,
+  );
+  const trendChart = {
+    width: 800,
+    height: 260,
+    left: 48,
+    right: 18,
+    top: 18,
+    bottom: 40,
+  };
+  const trendPlotWidth = trendChart.width - trendChart.left - trendChart.right;
+  const trendPlotHeight =
+    trendChart.height - trendChart.top - trendChart.bottom;
+  const trendBaseline = trendChart.top + trendPlotHeight;
+  const trendSeries = analytics.redemptions.trend.map((bucket, index, rows) => {
+    const x =
+      rows.length > 1
+        ? trendChart.left + (index / (rows.length - 1)) * trendPlotWidth
+        : trendChart.left + trendPlotWidth / 2;
+    const y =
+      trendChart.top +
+      (1 - bucket.redemptions / maximumTrendRedemptions) * trendPlotHeight;
+
+    return { ...bucket, x, y };
+  });
+  const trendLinePath = trendSeries
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+  const trendAreaPath = trendSeries.length
+    ? `${trendLinePath} L ${trendSeries.at(-1).x} ${trendBaseline} L ${trendSeries[0].x} ${trendBaseline} Z`
+    : "";
+  const trendLabelInterval = Math.max(
     1,
-    ...analytics.redemptions.rewardMix.map((item) => item.count),
+    Math.ceil(analytics.redemptions.trend.length / 9),
+  );
+  const trendPeak = trendSeries.reduce(
+    (peak, bucket) =>
+      !peak || bucket.redemptions > peak.redemptions ? bucket : peak,
+    null,
   );
   const rewardTypeLabels = {
     discount: "Discounts",
     gift_card: "Gift cards",
     store_credit: "Store credit",
   };
+  const rewardTypeColors = {
+    discount: "#5c6ac4",
+    gift_card: "#008060",
+    store_credit: "#d97706",
+  };
+  const rewardMixTotal = analytics.redemptions.rewardMix.reduce(
+    (total, item) => total + item.count,
+    0,
+  );
+  let rewardMixCursor = 0;
+  const rewardMixSegments = analytics.redemptions.rewardMix.map((item) => {
+    const percentage =
+      rewardMixTotal > 0 ? (item.count / rewardMixTotal) * 100 : 0;
+    const segment = {
+      ...item,
+      color: rewardTypeColors[item.type] || "#8c9196",
+      percentage,
+      start: rewardMixCursor,
+      end: rewardMixCursor + percentage,
+    };
+    rewardMixCursor += percentage;
+    return segment;
+  });
+  const rewardMixBackground =
+    rewardMixTotal > 0
+      ? `conic-gradient(${rewardMixSegments
+          .filter((item) => item.percentage > 0)
+          .map(
+            (item) =>
+              `${item.color} ${item.start.toFixed(2)}% ${item.end.toFixed(2)}%`,
+          )
+          .join(", ")})`
+      : "#e3e5e7";
+  const engagementRate = Math.min(
+    100,
+    Math.max(0, analytics.engagement.engagementRate),
+  );
+  const inactiveMembers = Math.max(
+    0,
+    analytics.engagement.totalMembers - analytics.engagement.activeMembers,
+  );
 
   return (
     <s-page heading="Loyalty dashboard" inlineSize="large">
@@ -343,28 +423,114 @@ export default function Dashboard() {
             </div>
           </div>
           {analytics.redemptions.count > 0 ? (
-            <div
-              className="trend-chart"
-              role="img"
-              aria-label="Completed redemptions over time"
-            >
-              {analytics.redemptions.trend.map((bucket, index) => (
-                <div className="trend-column" key={`${bucket.label}-${index}`}>
-                  <span className="trend-value">
-                    {formatter.format(bucket.redemptions)}
-                  </span>
-                  <div className="trend-track">
-                    <span
-                      className="trend-bar"
-                      style={{
-                        height: `${Math.max(4, (bucket.redemptions / maximumTrendRedemptions) * 100)}%`,
-                      }}
-                      title={`${bucket.label}: ${bucket.redemptions} redemptions`}
-                    />
-                  </div>
-                  <span className="trend-label">{bucket.label}</span>
-                </div>
-              ))}
+            <div className="trend-chart-shell">
+              <div
+                className="trend-chart"
+                role="img"
+                aria-label={`Completed redemptions over time. Peak ${formatter.format(trendPeak?.redemptions || 0)} on ${trendPeak?.label || "this period"}.`}
+              >
+                <svg
+                  className="trend-line-chart"
+                  viewBox={`0 0 ${trendChart.width} ${trendChart.height}`}
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <defs>
+                    <linearGradient
+                      id="redemptionTrendArea"
+                      x1="0"
+                      y1="0"
+                      x2="0"
+                      y2="1"
+                    >
+                      <stop offset="0%" stopColor="#5c6ac4" stopOpacity="0.3" />
+                      <stop
+                        offset="100%"
+                        stopColor="#5c6ac4"
+                        stopOpacity="0.03"
+                      />
+                    </linearGradient>
+                  </defs>
+
+                  {trendGridRatios.map((ratio) => {
+                    const y = trendChart.top + ratio * trendPlotHeight;
+                    const value = Math.round(
+                      maximumTrendRedemptions * (1 - ratio),
+                    );
+
+                    return (
+                      <g key={ratio}>
+                        <line
+                          className="trend-grid-line"
+                          x1={trendChart.left}
+                          x2={trendChart.width - trendChart.right}
+                          y1={y}
+                          y2={y}
+                        />
+                        <text
+                          className="trend-axis-label"
+                          x={trendChart.left - 12}
+                          y={y + 4}
+                          textAnchor="end"
+                        >
+                          {value}
+                        </text>
+                      </g>
+                    );
+                  })}
+
+                  <path className="trend-area" d={trendAreaPath} />
+                  <path className="trend-line" d={trendLinePath} />
+
+                  {trendSeries.map((point, index) => (
+                    <g key={`${point.label}-${index}`}>
+                      <circle
+                        className="trend-point-halo"
+                        cx={point.x}
+                        cy={point.y}
+                        r={point.redemptions > 0 ? 8 : 5}
+                      />
+                      <circle
+                        className="trend-point"
+                        cx={point.x}
+                        cy={point.y}
+                        r={point.redemptions > 0 ? 4.5 : 2.5}
+                      >
+                        <title>
+                          {point.label}: {point.redemptions} redemptions,{" "}
+                          {point.points} points
+                        </title>
+                      </circle>
+                      {index % trendLabelInterval === 0 ||
+                      index === trendSeries.length - 1 ? (
+                        <text
+                          className="trend-axis-label trend-date-label"
+                          x={point.x}
+                          y={trendChart.height - 13}
+                          textAnchor="middle"
+                        >
+                          {point.label}
+                        </text>
+                      ) : null}
+                    </g>
+                  ))}
+                </svg>
+              </div>
+
+              <div className="trend-chart-summary">
+                <span>
+                  <i className="trend-summary-dot" aria-hidden="true" />
+                  Completed redemptions
+                </span>
+                <span>
+                  Peak:{" "}
+                  <strong>
+                    {formatter.format(trendPeak?.redemptions || 0)}
+                  </strong>
+                  {" · "}
+                  {trendPeak?.label || "This period"}
+                </span>
+              </div>
             </div>
           ) : (
             <div className="analytics-empty">
@@ -380,23 +546,49 @@ export default function Dashboard() {
               <p>Completed redemptions by reward type.</p>
             </div>
           </div>
-          <div className="mix-list">
-            {analytics.redemptions.rewardMix.map((item) => (
-              <div className="mix-item" key={item.type}>
-                <div>
-                  <span>{rewardTypeLabels[item.type]}</span>
-                  <strong>{formatter.format(item.count)}</strong>
-                </div>
-                <div className="mix-track">
-                  <span
-                    style={{
-                      width: `${(item.count / maximumRewardMix) * 100}%`,
-                    }}
-                  />
-                </div>
-                <small>{currencyFormatter.format(item.value)} value</small>
+          <div className="donut-layout">
+            <div
+              className="donut-chart reward-mix-donut"
+              role="img"
+              aria-label={
+                rewardMixTotal > 0
+                  ? rewardMixSegments
+                      .map(
+                        (item) =>
+                          `${rewardTypeLabels[item.type]} ${percentFormatter.format(item.percentage)} percent`,
+                      )
+                      .join(", ")
+                  : "No completed reward redemptions"
+              }
+              style={{ background: rewardMixBackground }}
+            >
+              <div className="donut-center">
+                <strong>{formatter.format(rewardMixTotal)}</strong>
+                <span>Redemptions</span>
               </div>
-            ))}
+            </div>
+
+            <div className="mix-list" aria-label="Reward mix legend">
+              {rewardMixSegments.map((item) => (
+                <div className="mix-item" key={item.type}>
+                  <span
+                    className="chart-legend-dot"
+                    style={{ background: item.color }}
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <span>{rewardTypeLabels[item.type]}</span>
+                    <small>
+                      {currencyFormatter.format(item.value)} reward value
+                    </small>
+                  </div>
+                  <div className="mix-value">
+                    <strong>{formatter.format(item.count)}</strong>
+                    <small>{percentFormatter.format(item.percentage)}%</small>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 
@@ -414,43 +606,73 @@ export default function Dashboard() {
               engaged
             </span>
           </div>
-          <div className="engagement-grid">
-            <article>
-              <span>Active members</span>
-              <strong>
-                {formatter.format(analytics.engagement.activeMembers)}
-              </strong>
-              <p>Earned points or redeemed rewards</p>
-            </article>
-            <article>
-              <span>Points earners</span>
-              <strong>{formatter.format(analytics.engagement.earners)}</strong>
-              <p>
-                {formatter.format(analytics.redemptions.pointsEarned)} points
-                earned
-              </p>
-            </article>
-            <article>
-              <span>Reward redeemers</span>
-              <strong>
-                {formatter.format(analytics.engagement.redeemers)}
-              </strong>
-              <p>Customers with completed rewards</p>
-            </article>
-            <article>
-              <span>Repeat redeemers</span>
-              <strong>
-                {formatter.format(analytics.engagement.repeatRedeemers)}
-              </strong>
-              <p>Redeemed two or more times</p>
-            </article>
-            <article>
-              <span>New members</span>
-              <strong>
-                {formatter.format(analytics.engagement.newMembers)}
-              </strong>
-              <p>Joined during this period</p>
-            </article>
+          <div className="engagement-content">
+            <div className="engagement-chart-card">
+              <div
+                className="donut-chart engagement-donut"
+                role="img"
+                aria-label={`${percentFormatter.format(engagementRate)} percent of members engaged`}
+                style={{
+                  background: `conic-gradient(#008060 0% ${engagementRate}%, #e3e5e7 ${engagementRate}% 100%)`,
+                }}
+              >
+                <div className="donut-center">
+                  <strong>{percentFormatter.format(engagementRate)}%</strong>
+                  <span>Engaged</span>
+                </div>
+              </div>
+              <div className="engagement-legend">
+                <span>
+                  <i className="chart-legend-dot active" aria-hidden="true" />
+                  {formatter.format(analytics.engagement.activeMembers)} active
+                </span>
+                <span>
+                  <i className="chart-legend-dot inactive" aria-hidden="true" />
+                  {formatter.format(inactiveMembers)} inactive
+                </span>
+              </div>
+            </div>
+
+            <div className="engagement-grid">
+              <article>
+                <span>Active members</span>
+                <strong>
+                  {formatter.format(analytics.engagement.activeMembers)}
+                </strong>
+                <p>Earned points or redeemed rewards</p>
+              </article>
+              <article>
+                <span>Points earners</span>
+                <strong>
+                  {formatter.format(analytics.engagement.earners)}
+                </strong>
+                <p>
+                  {formatter.format(analytics.redemptions.pointsEarned)} points
+                  earned
+                </p>
+              </article>
+              <article>
+                <span>Reward redeemers</span>
+                <strong>
+                  {formatter.format(analytics.engagement.redeemers)}
+                </strong>
+                <p>Customers with completed rewards</p>
+              </article>
+              <article>
+                <span>Repeat redeemers</span>
+                <strong>
+                  {formatter.format(analytics.engagement.repeatRedeemers)}
+                </strong>
+                <p>Redeemed two or more times</p>
+              </article>
+              <article>
+                <span>New members</span>
+                <strong>
+                  {formatter.format(analytics.engagement.newMembers)}
+                </strong>
+                <p>Joined during this period</p>
+              </article>
+            </div>
           </div>
         </section>
 
@@ -822,82 +1044,182 @@ const dashboardStyles = `
     background: #f6f6f7;
   }
 
-  .trend-chart {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(34px, 1fr));
-    align-items: end;
-    gap: 8px;
-    min-height: 220px;
-    padding-block-start: 10px;
-  }
-
-  .trend-column {
-    display: grid;
-    grid-template-rows: 18px 150px auto;
-    gap: 6px;
+  .trend-chart-shell {
     min-width: 0;
-    text-align: center;
   }
 
-  .trend-value,
-  .trend-label {
-    overflow: hidden;
-    color: #616a75;
-    font-size: 10px;
-    line-height: 14px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .trend-chart {
+    min-width: 0;
+    overflow-x: auto;
   }
 
-  .trend-track {
-    display: flex;
-    align-items: end;
-    justify-content: center;
-    height: 150px;
-    border-radius: 6px;
-    background: linear-gradient(to top, #f1f2f3 1px, transparent 1px);
-    background-size: 100% 38px;
-  }
-
-  .trend-bar {
+  .trend-line-chart {
     display: block;
-    width: min(28px, 75%);
-    min-height: 4px;
-    border-radius: 6px 6px 2px 2px;
-    background: linear-gradient(180deg, #5c6ac4, #303f9f);
+    width: 100%;
+    min-width: 560px;
+    height: auto;
+  }
+
+  .trend-grid-line {
+    stroke: #e7e8ea;
+    stroke-width: 1;
+    stroke-dasharray: 4 5;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .trend-axis-label {
+    fill: #6d7175;
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .trend-date-label {
+    font-size: 9px;
+  }
+
+  .trend-area {
+    fill: url(#redemptionTrendArea);
+  }
+
+  .trend-line {
+    fill: none;
+    stroke: #4f46b8;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .trend-point-halo {
+    fill: #ffffff;
+    stroke: #d8d5f4;
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .trend-point {
+    fill: #5c6ac4;
+    stroke: #ffffff;
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .trend-chart-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 4px 0;
+    border-block-start: 1px solid #eceff1;
+    color: #616a75;
+    font-size: 11px;
+    line-height: 16px;
+  }
+
+  .trend-chart-summary span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .trend-chart-summary strong {
+    color: #202223;
+  }
+
+  .trend-summary-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #5c6ac4;
+  }
+
+  .donut-layout {
+    display: grid;
+    grid-template-columns: minmax(170px, 0.8fr) minmax(190px, 1.2fr);
+    align-items: center;
+    gap: 24px;
+  }
+
+  .donut-chart {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: min(100%, 210px);
+    aspect-ratio: 1;
+    margin-inline: auto;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+  }
+
+  .donut-center {
+    display: grid;
+    place-content: center;
+    width: 62%;
+    aspect-ratio: 1;
+    border: 1px solid #eceff1;
+    border-radius: 50%;
+    background: #ffffff;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  }
+
+  .donut-center strong {
+    color: #202223;
+    font-size: 26px;
+    line-height: 32px;
+  }
+
+  .donut-center span {
+    color: #616a75;
+    font-size: 11px;
+    line-height: 16px;
   }
 
   .mix-list {
     display: grid;
-    gap: 18px;
+    gap: 4px;
   }
 
-  .mix-item > div:first-child {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
+  .mix-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 8px;
+    border-block-end: 1px solid #eceff1;
+  }
+
+  .mix-item:last-child {
+    border-block-end: 0;
+  }
+
+  .mix-item > div > span,
+  .mix-value strong {
+    display: block;
     color: #3b3f44;
     font-size: 13px;
-  }
-
-  .mix-track {
-    height: 8px;
-    margin-block: 7px 5px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: #eceff1;
-  }
-
-  .mix-track span {
-    display: block;
-    height: 100%;
-    border-radius: inherit;
-    background: #4fd18b;
+    line-height: 18px;
+    font-weight: 650;
   }
 
   .mix-item small {
+    display: block;
     color: #616a75;
     font-size: 11px;
+    line-height: 16px;
+  }
+
+  .mix-value {
+    text-align: end;
+  }
+
+  .chart-legend-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    flex: 0 0 10px;
+    border-radius: 50%;
   }
 
   .analytics-empty {
@@ -909,8 +1231,47 @@ const dashboardStyles = `
     text-align: center;
   }
 
+  .engagement-content {
+    display: grid;
+    grid-template-columns: minmax(190px, 0.65fr) minmax(0, 2.35fr);
+    align-items: center;
+    gap: 24px;
+  }
+
+  .engagement-chart-card {
+    display: grid;
+    gap: 16px;
+  }
+
+  .engagement-donut {
+    width: min(100%, 190px);
+  }
+
+  .engagement-legend {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    color: #616a75;
+    font-size: 11px;
+  }
+
+  .engagement-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .chart-legend-dot.active {
+    background: #008060;
+  }
+
+  .chart-legend-dot.inactive {
+    background: #e3e5e7;
+  }
+
   .engagement-grid {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .table-panel {
@@ -994,6 +1355,10 @@ const dashboardStyles = `
     .engagement-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+
+    .engagement-content {
+      grid-template-columns: 1fr;
+    }
   }
 
   @media (max-width: 620px) {
@@ -1011,6 +1376,10 @@ const dashboardStyles = `
       grid-template-columns: 1fr;
     }
 
+    .donut-layout {
+      grid-template-columns: 1fr;
+    }
+
     .analytics-filters,
     .analytics-filters label,
     .analytics-filters select {
@@ -1020,6 +1389,11 @@ const dashboardStyles = `
     .filter-actions {
       width: 100%;
       justify-content: space-between;
+    }
+
+    .trend-chart-summary {
+      align-items: flex-start;
+      flex-direction: column;
     }
 
     .dashboard th,

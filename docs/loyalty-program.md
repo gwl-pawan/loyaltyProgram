@@ -21,6 +21,9 @@ The application currently supports:
 
 See [Birthday rewards](birthday-rewards.md) for configuration, scheduling, privacy, and QA details.
 
+See [Special date rewards](special-date-rewards.md) for the two configurable
+customer-selected annual reward dates.
+
 ## 2. Technology stack
 
 | Area                          | Technology                                                                         |

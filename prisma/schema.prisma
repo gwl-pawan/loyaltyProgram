@@ -47,33 +47,40 @@ model LoyaltySetting {
   shopId Int  @unique
   shop   Shop @relation(fields: [shopId], references: [id])
 
-  signupBonusPoints            Int       @default(100)
-  orderSpendAmount             Int       @default(100)
-  orderSpendPoints             Int       @default(10)
-  refundSpendAmount            Int       @default(100)
-  refundSpendPoints            Int       @default(10)
-  checkoutRedemptionEnabled    Boolean   @default(true)
-  storeCreditRedemptionEnabled Boolean   @default(true)
-  checkoutRewardLimit          Int       @default(10)
-  preferredIntegration         String    @default("theme")
-  redemptionRewards            String    @db.Text
-  pointsExpiryEnabled          Boolean   @default(false)
-  pointsExpiryValue            Int       @default(12)
-  pointsExpiryUnit             String    @default("months")
-  pointsExpiryApplyToExisting  Boolean   @default(false)
-  pointsExpiryStartedAt        DateTime?
-  pointsExpiryLastRunAt        DateTime?
-  vipSpendThreshold            Float     @default(50000)
-  inactiveCustomerDays         Int       @default(90)
-  topSpenderPercent            Int       @default(10)
-  referralProgramEnabled       Boolean   @default(true)
-  referralAdvocatePoints       Int       @default(200)
-  referralFriendPoints         Int       @default(100)
-  referralAttributionDays      Int       @default(30)
-  birthdayRewardEnabled        Boolean   @default(false)
-  birthdayRewardPoints         Int       @default(250)
-  birthdayRewardMinimumLeadDays Int      @default(30)
-  birthdayRewardTimeZone       String    @default("UTC") @db.VarChar(100)
+  signupBonusPoints                Int       @default(100)
+  orderSpendAmount                 Int       @default(100)
+  orderSpendPoints                 Int       @default(10)
+  refundSpendAmount                Int       @default(100)
+  refundSpendPoints                Int       @default(10)
+  checkoutRedemptionEnabled        Boolean   @default(true)
+  storeCreditRedemptionEnabled     Boolean   @default(true)
+  checkoutRewardLimit              Int       @default(10)
+  preferredIntegration             String    @default("theme")
+  redemptionRewards                String    @db.Text
+  pointsExpiryEnabled              Boolean   @default(false)
+  pointsExpiryValue                Int       @default(12)
+  pointsExpiryUnit                 String    @default("months")
+  pointsExpiryApplyToExisting      Boolean   @default(false)
+  pointsExpiryStartedAt            DateTime?
+  pointsExpiryLastRunAt            DateTime?
+  vipSpendThreshold                Float     @default(50000)
+  inactiveCustomerDays             Int       @default(90)
+  topSpenderPercent                Int       @default(10)
+  referralProgramEnabled           Boolean   @default(true)
+  referralAdvocatePoints           Int       @default(200)
+  referralFriendPoints             Int       @default(100)
+  referralAttributionDays          Int       @default(30)
+  birthdayRewardEnabled            Boolean   @default(false)
+  birthdayRewardPoints             Int       @default(250)
+  birthdayRewardMinimumLeadDays    Int       @default(30)
+  birthdayRewardTimeZone           String    @default("UTC") @db.VarChar(100)
+  specialDateRewardMinimumLeadDays Int       @default(30)
+  specialDateReward1Enabled        Boolean   @default(false)
+  specialDateReward1Heading        String    @default("Special day reward 1") @db.VarChar(160)
+  specialDateReward1Points         Int       @default(100)
+  specialDateReward2Enabled        Boolean   @default(false)
+  specialDateReward2Heading        String    @default("Special day reward 2") @db.VarChar(160)
+  specialDateReward2Points         Int       @default(100)
 
   // Checkout UI Text Settings
   checkoutLoginMessage        String @db.Text
@@ -153,18 +160,32 @@ model Customer {
 
   referralCode String?
 
-  birthMonth                  Int?
-  birthDay                    Int?
-  birthdayProvidedAt          DateTime?
-  birthdayUpdatedAt           DateTime?
-  birthdayRewardLastIssuedYear Int?
-  birthdayRewardLastIssuedAt   DateTime?
+  birthMonth                       Int?
+  birthDay                         Int?
+  birthdayProvidedAt               DateTime?
+  birthdayUpdatedAt                DateTime?
+  birthdayRewardLastIssuedYear     Int?
+  birthdayRewardLastIssuedAt       DateTime?
+  specialDate1Month                Int?
+  specialDate1Day                  Int?
+  specialDate1ProvidedAt           DateTime?
+  specialDate1UpdatedAt            DateTime?
+  specialDateReward1LastIssuedYear Int?
+  specialDateReward1LastIssuedAt   DateTime?
+  specialDate2Month                Int?
+  specialDate2Day                  Int?
+  specialDate2ProvidedAt           DateTime?
+  specialDate2UpdatedAt            DateTime?
+  specialDateReward2LastIssuedYear Int?
+  specialDateReward2LastIssuedAt   DateTime?
 
   @@unique([shopId, shopifyCustomerId])
   @@unique([shopId, referralCode])
   @@index([shopId, lifetimeSpend])
   @@index([shopId, lastActivityAt])
   @@index([shopId, birthMonth, birthDay])
+  @@index([shopId, specialDate1Month, specialDate1Day])
+  @@index([shopId, specialDate2Month, specialDate2Day])
 }
 
 model Referral {
@@ -304,15 +325,17 @@ model EmailNotificationSetting {
   shopId Int  @unique
   shop   Shop @relation(fields: [shopId], references: [id])
 
-  enabled              Boolean @default(true)
-  signupBonusEnabled   Boolean @default(true)
-  orderPointsEnabled   Boolean @default(true)
-  rewardCreatedEnabled Boolean @default(true)
-  rewardAppliedEnabled Boolean @default(true)
-  refundEnabled        Boolean @default(true)
-  pointsExpiryEnabled  Boolean @default(true)
-  referralEnabled      Boolean @default(true)
-  birthdayRewardEnabled Boolean @default(true)
+  enabled                  Boolean @default(true)
+  signupBonusEnabled       Boolean @default(true)
+  orderPointsEnabled       Boolean @default(true)
+  rewardCreatedEnabled     Boolean @default(true)
+  rewardAppliedEnabled     Boolean @default(true)
+  refundEnabled            Boolean @default(true)
+  pointsExpiryEnabled      Boolean @default(true)
+  referralEnabled          Boolean @default(true)
+  birthdayRewardEnabled    Boolean @default(true)
+  specialDateRewardEnabled Boolean @default(true)
+  templates                Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

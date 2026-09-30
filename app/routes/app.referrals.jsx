@@ -2,6 +2,7 @@ import { useLoaderData } from "react-router";
 
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
+import { runShopifyGraphql } from "../services/errors.server";
 
 const STATUS_LABELS = {
   clicked: "Clicked",
@@ -11,7 +12,7 @@ const STATUS_LABELS = {
 };
 
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const requestedStatus = url.searchParams.get("status");
   const status = Object.hasOwn(STATUS_LABELS, requestedStatus)
@@ -87,8 +88,20 @@ export const loader = async ({ request }) => {
     if (Object.hasOwn(totals, group.status)) totals[group.status] = count;
   });
 
+  let orderNameById = {};
+
+  try {
+    orderNameById = await loadOrderNameById(
+      admin,
+      referrals.map((referral) => referral.qualifiedOrderId),
+    );
+  } catch (error) {
+    console.error("[referrals] Could not load Shopify order names", error);
+  }
+
   return Response.json({
     referrals,
+    orderNameById,
     totals,
     pointsIssued: pointsAggregate._sum.points || 0,
     status,
@@ -114,8 +127,58 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+async function loadOrderNameById(admin, orderIds) {
+  const graphIds = Array.from(
+    new Set(
+      orderIds
+        .map((orderId) => String(orderId || ""))
+        .filter((orderId) => orderId.startsWith("gid://shopify/Order/")),
+    ),
+  );
+
+  if (graphIds.length === 0) return {};
+
+  const data = await runShopifyGraphql(
+    admin,
+    `#graphql
+      query ReferralOrderNames($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Order {
+            id
+            name
+          }
+        }
+      }
+    `,
+    {
+      variables: { ids: graphIds },
+      operation: "Load referral order names",
+    },
+  );
+
+  return (data.nodes || []).reduce((names, order) => {
+    if (order?.id && order?.name) names[order.id] = order.name;
+    return names;
+  }, {});
+}
+
+function formatOrderNumber(value) {
+  const reference = String(value || "").trim();
+  const orderNumber = reference.match(/^#?(\d+)$/)?.[1];
+
+  if (orderNumber) return `#${orderNumber}`;
+  return reference && !reference.startsWith("gid://") ? reference : "—";
+}
+
 export default function ReferralsPage() {
-  const { referrals, totals, pointsIssued, status, settings } = useLoaderData();
+  const {
+    referrals,
+    orderNameById = {},
+    totals,
+    pointsIssued,
+    status,
+    settings,
+  } = useLoaderData();
   const conversionRate =
     totals.all > 0 ? Math.round((totals.rewarded / totals.all) * 1000) / 10 : 0;
 
@@ -225,7 +288,11 @@ export default function ReferralsPage() {
                         <code>{referral.referralCode}</code>
                       </td>
                       <td>{formatDate(referral.clickedAt)}</td>
-                      <td>{referral.qualifiedOrderId || "—"}</td>
+                      <td>
+                        {formatOrderNumber(
+                          orderNameById[referral.qualifiedOrderId],
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

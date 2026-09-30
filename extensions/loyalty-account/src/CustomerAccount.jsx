@@ -31,6 +31,8 @@ const ACTIVITY_APPEARANCE = {
   store_credit_failed: { icon: "x-circle", tone: "critical" },
   points_refunded: { icon: "return", tone: "success" },
   points_expired: { icon: "clock", tone: "warning" },
+  birthday_rewarded: { icon: "gift-card", tone: "success" },
+  special_date_rewarded: { icon: "gift-card", tone: "success" },
 };
 
 function getRewardTypeBadge(activityType) {
@@ -48,6 +50,13 @@ function getRewardTypeBadge(activityType) {
 
   if (activityType === "points_expired") {
     return { icon: "clock", label: "POINTS", tone: "warning" };
+  }
+
+  if (
+    activityType === "birthday_rewarded" ||
+    activityType === "special_date_rewarded"
+  ) {
+    return { icon: "gift-card", label: "POINTS", tone: "success" };
   }
 
   return { icon: "discount", label: "DISCOUNT", tone: "info" };
@@ -133,8 +142,12 @@ function getStoreCreditTransactionTone(type) {
   return "success";
 }
 
-function getShopifyId(value) {
-  return value ? String(value).split("/").pop() : "";
+function formatOrderReference(orderName) {
+  const reference = String(orderName || "").trim();
+  const orderNumber = reference.match(/^#?(\d+)$/)?.[1];
+
+  if (orderNumber) return `#${orderNumber}`;
+  return reference.startsWith("gid://") ? "-" : reference || "-";
 }
 
 /** @param {any} event */
@@ -323,6 +336,9 @@ export function CustomerAccountLoyaltyPoints() {
   const [birthdayMonth, setBirthdayMonth] = useState("");
   const [birthdayDay, setBirthdayDay] = useState("");
   const [isSavingBirthday, setIsSavingBirthday] = useState(false);
+  const [specialDates, setSpecialDates] = useState(null);
+  const [specialDateValues, setSpecialDateValues] = useState({});
+  const [savingSpecialDateSlot, setSavingSpecialDateSlot] = useState(null);
   const [historySearch, setHistorySearch] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
   const [storeCreditHistoryPage, setStoreCreditHistoryPage] = useState(1);
@@ -634,6 +650,100 @@ export function CustomerAccountLoyaltyPoints() {
     }
   };
 
+  useEffect(() => {
+    if (isResolvingProxyBaseUrl || !customer?.id || apiBaseUrls.length === 0) {
+      setSpecialDates(null);
+      return;
+    }
+
+    let isCurrent = true;
+    async function loadSpecialDates() {
+      try {
+        const token = await shopify.sessionToken.get();
+        const data = await fetchApiJson(
+          buildApiUrls(apiBaseUrls, "customer-account/special-dates"),
+          { headers: { Authorization: `Bearer ${token}` } },
+          "Could not load special dates.",
+        );
+        if (!isCurrent) return;
+        setSpecialDates(data.specialDates || null);
+        setSpecialDateValues(
+          Object.fromEntries(
+            (data.specialDates?.rewards || []).map((reward) => [
+              reward.slot,
+              {
+                month: String(reward.date?.month || ""),
+                day: String(reward.date?.day || ""),
+              },
+            ]),
+          ),
+        );
+      } catch (error) {
+        console.error("Could not load special dates", error);
+      }
+    }
+
+    loadSpecialDates();
+    return () => {
+      isCurrent = false;
+    };
+  }, [apiBaseUrls, apiBaseUrlsKey, customer?.id, isResolvingProxyBaseUrl]);
+
+  const saveSpecialDate = async (slot, action = "save") => {
+    setSavingSpecialDateSlot(slot);
+    setMessage("");
+    try {
+      const token = await shopify.sessionToken.get();
+      const value = specialDateValues[slot] || {};
+      const data = await fetchApiJson(
+        buildApiUrls(apiBaseUrls, "customer-account/special-dates"),
+        {
+          method: action === "delete" ? "DELETE" : "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(
+            action === "delete"
+              ? { action: "delete", slot }
+              : {
+                  slot,
+                  date: {
+                    month: Number(value.month),
+                    day: Number(value.day),
+                  },
+                },
+          ),
+        },
+        "Could not save special date.",
+      );
+      setSpecialDates(data.specialDates || null);
+      setSpecialDateValues(
+        Object.fromEntries(
+          (data.specialDates?.rewards || []).map((reward) => [
+            reward.slot,
+            {
+              month: String(reward.date?.month || ""),
+              day: String(reward.date?.day || ""),
+            },
+          ]),
+        ),
+      );
+      const reward = data.specialDates?.rewards?.find(
+        (item) => item.slot === slot,
+      );
+      setMessage(
+        action === "delete"
+          ? `${reward?.heading || "Special date"} removed.`
+          : `${reward?.heading || "Special date"} saved for annual rewards.`,
+      );
+    } catch (error) {
+      setMessage(error.message || "Could not save special date.");
+    } finally {
+      setSavingSpecialDateSlot(null);
+    }
+  };
+
   const fetchHistory = useCallback(async () => {
     if (isResolvingProxyBaseUrl || !customer?.id) return;
     if (apiBaseUrls.length === 0) return;
@@ -916,45 +1026,53 @@ export function CustomerAccountLoyaltyPoints() {
   return (
     <s-box border="base" padding="large" borderRadius="large">
       <s-stack gap="large">
-        <s-button-group>
+        <s-stack direction="inline" gap="small">
           <s-button
-            slot="primary-action"
             variant={activeTab === "balance" ? "primary" : "secondary"}
             onClick={() => setActiveTab("balance")}
           >
             Store credit
           </s-button>
           <s-button
-            slot="secondary-actions"
-            variant={
-              activeTab === "store-credit-history" ? "primary" : "secondary"
-            }
-            onClick={() => setActiveTab("store-credit-history")}
-          >
-            Credit history
-          </s-button>
-          <s-button
-            slot="secondary-actions"
             variant={activeTab === "referrals" ? "primary" : "secondary"}
             onClick={() => setActiveTab("referrals")}
           >
             Refer a friend
           </s-button>
           <s-button
-            slot="secondary-actions"
             variant={activeTab === "birthday" ? "primary" : "secondary"}
             onClick={() => setActiveTab("birthday")}
           >
             Birthday reward
           </s-button>
           <s-button
-            slot="secondary-actions"
-            variant={activeTab === "history" ? "primary" : "secondary"}
-            onClick={() => setActiveTab("history")}
+            variant={activeTab === "special-dates" ? "primary" : "secondary"}
+            onClick={() => setActiveTab("special-dates")}
           >
-            Reward history
+            Special dates
           </s-button>
-        </s-button-group>
+          <s-button
+            variant={
+              activeTab === "store-credit-history" || activeTab === "history"
+                ? "primary"
+                : "secondary"
+            }
+            commandFor="loyalty-history-menu"
+          >
+            History
+          </s-button>
+          <s-menu
+            id="loyalty-history-menu"
+            accessibilityLabel="History options"
+          >
+            <s-button onClick={() => setActiveTab("store-credit-history")}>
+              Credit history
+            </s-button>
+            <s-button onClick={() => setActiveTab("history")}>
+              Reward history
+            </s-button>
+          </s-menu>
+        </s-stack>
 
         {message ? (
           <s-banner>
@@ -1211,12 +1329,9 @@ export function CustomerAccountLoyaltyPoints() {
                               ? new Date(item.createdAt).toLocaleString()
                               : "-"}
                           </s-text>
-                          {item.type === "debit" && item.orderId ? (
+                          {item.type === "debit" && item.orderName ? (
                             <s-text color="subdued" type="small">
-                              Order {item.orderName || ""}
-                              {item.orderName && getShopifyId(item.orderId)
-                                ? ` · ID ${getShopifyId(item.orderId)}`
-                                : getShopifyId(item.orderId)}
+                              Order {formatOrderReference(item.orderName)}
                             </s-text>
                           ) : null}
                         </s-stack>
@@ -1290,8 +1405,8 @@ export function CustomerAccountLoyaltyPoints() {
                 <s-stack gap="base">
                   <s-text>
                     Earn {birthday.points} points once a year. Enter your
-                    birthday at least {birthday.minimumLeadDays} days in
-                    advance to qualify.
+                    birthday at least {birthday.minimumLeadDays} days in advance
+                    to qualify.
                   </s-text>
                   <s-text color="subdued">{birthday.privacy}</s-text>
                   {birthday.birthday ? (
@@ -1386,6 +1501,145 @@ export function CustomerAccountLoyaltyPoints() {
             ) : (
               <s-banner tone="info">
                 <s-text>Birthday rewards are currently unavailable.</s-text>
+              </s-banner>
+            )}
+          </s-stack>
+        ) : activeTab === "special-dates" ? (
+          <s-stack gap="large">
+            <s-stack gap="none">
+              <s-heading>Special date rewards</s-heading>
+              <s-text color="subdued">
+                Save personal dates such as your anniversary and receive an
+                annual points gift.
+              </s-text>
+            </s-stack>
+            {(specialDates?.rewards || []).filter((reward) => reward.enabled)
+              .length ? (
+              <s-stack gap="base">
+                <s-text color="subdued">{specialDates.privacy}</s-text>
+                {(specialDates.rewards || [])
+                  .filter((reward) => reward.enabled)
+                  .map((reward) => {
+                    const value = specialDateValues[reward.slot] || {};
+                    const isSaving = savingSpecialDateSlot === reward.slot;
+                    return (
+                      <s-box
+                        key={reward.slot}
+                        background="subdued"
+                        padding="large"
+                        borderRadius="large"
+                      >
+                        <s-stack gap="base">
+                          <s-stack gap="none">
+                            <s-heading>{reward.heading}</s-heading>
+                            <s-text>
+                              Earn {reward.points} points once a year. Save the
+                              date at least {specialDates.minimumLeadDays} days
+                              in advance to qualify.
+                            </s-text>
+                          </s-stack>
+                          {reward.date ? (
+                            <s-text type="strong">
+                              Saved date: {reward.date.label}
+                              {reward.lastIssuedYear
+                                ? ` · Last rewarded ${reward.lastIssuedYear}`
+                                : ""}
+                            </s-text>
+                          ) : null}
+                          <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                            <s-select
+                              label={`${reward.heading} month`}
+                              value={value.month || ""}
+                              onChange={(event) =>
+                                setSpecialDateValues((current) => ({
+                                  ...current,
+                                  [reward.slot]: {
+                                    ...current[reward.slot],
+                                    month: getFormControlValue(event),
+                                  },
+                                }))
+                              }
+                            >
+                              <s-option value="">Select month</s-option>
+                              {[
+                                "January",
+                                "February",
+                                "March",
+                                "April",
+                                "May",
+                                "June",
+                                "July",
+                                "August",
+                                "September",
+                                "October",
+                                "November",
+                                "December",
+                              ].map((month, index) => (
+                                <s-option key={month} value={String(index + 1)}>
+                                  {month}
+                                </s-option>
+                              ))}
+                            </s-select>
+                            <s-select
+                              label={`${reward.heading} day`}
+                              value={value.day || ""}
+                              onChange={(event) =>
+                                setSpecialDateValues((current) => ({
+                                  ...current,
+                                  [reward.slot]: {
+                                    ...current[reward.slot],
+                                    day: getFormControlValue(event),
+                                  },
+                                }))
+                              }
+                            >
+                              <s-option value="">Select day</s-option>
+                              {Array.from(
+                                { length: 31 },
+                                (_, index) => index + 1,
+                              ).map((day) => (
+                                <s-option key={day} value={String(day)}>
+                                  {day}
+                                </s-option>
+                              ))}
+                            </s-select>
+                          </s-grid>
+                          <s-stack direction="inline" gap="small">
+                            <s-button
+                              variant="primary"
+                              loading={isSaving}
+                              disabled={
+                                Boolean(savingSpecialDateSlot) ||
+                                !value.month ||
+                                !value.day
+                              }
+                              onClick={() =>
+                                saveSpecialDate(reward.slot, "save")
+                              }
+                            >
+                              {reward.date ? "Update date" : "Save date"}
+                            </s-button>
+                            {reward.date ? (
+                              <s-button
+                                variant="secondary"
+                                tone="critical"
+                                disabled={Boolean(savingSpecialDateSlot)}
+                                onClick={() =>
+                                  saveSpecialDate(reward.slot, "delete")
+                                }
+                              >
+                                Remove date
+                              </s-button>
+                            ) : null}
+                          </s-stack>
+                        </s-stack>
+                      </s-box>
+                    );
+                  })}
+              </s-stack>
+            ) : (
+              <s-banner tone="info">
+                <s-text>Special date rewards are currently unavailable.</s-text>
               </s-banner>
             )}
           </s-stack>
@@ -1533,7 +1787,7 @@ export function CustomerAccountLoyaltyPoints() {
                     : item.activityType === "points_expired"
                       ? "Points expiry"
                       : item.rewardCode || "Reward activity";
-                  const hasOrder = Boolean(item.orderName || item.orderId);
+                  const hasOrder = Boolean(item.orderName);
 
                   return (
                     <s-box
@@ -1635,7 +1889,7 @@ export function CustomerAccountLoyaltyPoints() {
                                   Order
                                 </s-text>
                                 <s-text type="strong">
-                                  {item.orderName || item.orderId}
+                                  {formatOrderReference(item.orderName)}
                                 </s-text>
                               </s-stack>
                             </s-box>

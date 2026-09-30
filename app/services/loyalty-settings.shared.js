@@ -61,6 +61,13 @@ export const DEFAULT_LOYALTY_SETTINGS = {
   birthdayRewardPoints: 250,
   birthdayRewardMinimumLeadDays: 30,
   birthdayRewardTimeZone: "UTC",
+  specialDateRewardMinimumLeadDays: 30,
+  specialDateReward1Enabled: false,
+  specialDateReward1Heading: "Special day reward 1",
+  specialDateReward1Points: 100,
+  specialDateReward2Enabled: false,
+  specialDateReward2Heading: "Special day reward 2",
+  specialDateReward2Points: 100,
   // Checkout UI Text Settings
   checkoutLoginMessage: "Sign in to use loyalty points.",
   checkoutDescription: "You have {coupon_amount} available {reward_label}",

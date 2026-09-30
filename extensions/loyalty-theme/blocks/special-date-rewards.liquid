@@ -1,0 +1,69 @@
+<div
+  class="loyalty-special-dates"
+  data-loyalty-special-dates
+  data-endpoint="/apps/loyalty-points/api/special-dates"
+  data-loading-text="{{ 'special_dates.loading' | t | escape }}"
+  data-saved-text="{{ 'special_dates.saved' | t | escape }}"
+  data-removed-text="{{ 'special_dates.removed' | t | escape }}"
+  data-save-text="{{ 'special_dates.save' | t | escape }}"
+  data-update-text="{{ 'special_dates.update' | t | escape }}"
+  data-error-text="{{ 'special_dates.error' | t | escape }}"
+  data-rule-template="{{ 'special_dates.rule' | t: points: '__POINTS__', days: '__DAYS__' | escape }}"
+  data-saved-template="{{ 'special_dates.saved_label' | t: date: '__DATE__' | escape }}"
+  style="--special-date-accent: {{ block.settings.accent_color }}"
+  {{ block.shopify_attributes }}
+>
+  <h2>{{ 'special_dates.heading' | t }}</h2>
+
+  {% if customer %}
+    <p>{{ 'special_dates.description' | t }}</p>
+    <p class="loyalty-special-dates__privacy">{{ 'special_dates.privacy' | t }}</p>
+    <div data-special-date-list>
+      {% for slot in (1..2) %}
+        <form data-special-date-form data-slot="{{ slot }}" hidden>
+          <h3 data-special-date-heading></h3>
+          <p data-special-date-rule></p>
+          <div class="loyalty-special-dates__fields">
+            <label>
+              <span>{{ 'special_dates.month' | t }}</span>
+              <input name="month" type="number" min="1" max="12" inputmode="numeric" required>
+            </label>
+            <label>
+              <span>{{ 'special_dates.day' | t }}</span>
+              <input name="day" type="number" min="1" max="31" inputmode="numeric" required>
+            </label>
+          </div>
+          <p data-special-date-saved hidden></p>
+          <p data-special-date-message role="status" aria-live="polite"></p>
+          <div class="loyalty-special-dates__actions">
+            <button type="submit" data-special-date-save>{{ 'special_dates.save' | t }}</button>
+            <button type="button" data-special-date-remove hidden>{{ 'special_dates.remove' | t }}</button>
+          </div>
+        </form>
+      {% endfor %}
+    </div>
+    <p data-special-date-empty hidden>{{ 'special_dates.unavailable' | t }}</p>
+  {% else %}
+    <p>
+      {{ 'special_dates.login_prompt' | t }}
+      <a href="{{ routes.account_login_url }}">{{ 'special_dates.login' | t }}</a>
+    </p>
+  {% endif %}
+</div>
+
+{% schema %}
+{
+  "name": "Special date rewards",
+  "target": "section",
+  "stylesheet": "special-date-rewards.css",
+  "javascript": "special-date-rewards.js",
+  "settings": [
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Accent color",
+      "default": "#008060"
+    }
+  ]
+}
+{% endschema %}

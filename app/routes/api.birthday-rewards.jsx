@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import crypto from "node:crypto";
 
 import { processBirthdayRewards } from "../services/birthday-rewards.server";
+import { processSpecialDateRewards } from "../services/special-date-rewards.server";
 import { logError } from "../services/errors.server";
 
 function getToken(request) {
@@ -41,16 +42,23 @@ async function run(request) {
     const body =
       request.method === "POST" ? await request.json().catch(() => ({})) : {};
     const url = new URL(request.url);
-    const summary = await processBirthdayRewards({
+    const options = {
       shopDomain: body.shop || url.searchParams.get("shop") || undefined,
       batchSize:
         body.batchSize || url.searchParams.get("batchSize") || undefined,
+    };
+    const birthdaySummary = await processBirthdayRewards(options);
+    const specialDateRewards = await processSpecialDateRewards(options);
+
+    return Response.json({
+      success: true,
+      ...birthdaySummary,
+      specialDateRewards,
     });
-    return Response.json({ success: true, ...summary });
   } catch (error) {
     logError("birthday-rewards:route", error);
     return Response.json(
-      { success: false, message: "Could not process birthday rewards" },
+      { success: false, message: "Could not process annual rewards" },
       { status: 500 },
     );
   }

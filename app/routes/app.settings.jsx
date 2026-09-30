@@ -110,6 +110,14 @@ const SETTING_FIELDS = [
     description:
       "Reduces abuse by delaying eligibility after a birthday is first saved or changed.",
   },
+  {
+    name: "specialDateRewardMinimumLeadDays",
+    label: "Special date lead time",
+    suffix: "days",
+    help: "A special date must be saved this many days before the reward date.",
+    description:
+      "Reduces abuse by delaying eligibility after a customer saves or changes a special date.",
+  },
 ];
 
 const RULE_GROUPS = [
@@ -143,7 +151,15 @@ const RULE_GROUPS = [
     description: "Celebrate customers with an automatic annual points credit.",
     fields: ["birthdayRewardPoints", "birthdayRewardMinimumLeadDays"],
   },
+  {
+    title: "Special date rewards",
+    description:
+      "Let customers save two personal annual dates, such as anniversaries.",
+    fields: ["specialDateRewardMinimumLeadDays"],
+  },
 ];
+
+const SPECIAL_DATE_REWARD_SLOTS = [1, 2];
 
 const EMAIL_NOTIFICATION_FIELDS = [
   {
@@ -185,6 +201,11 @@ const EMAIL_NOTIFICATION_FIELDS = [
     name: "birthdayRewardEnabled",
     label: "Birthday rewards",
     description: "Annual birthday points credited to eligible customers.",
+  },
+  {
+    name: "specialDateRewardEnabled",
+    label: "Special date rewards",
+    description: "Points credited on customer-selected annual dates.",
   },
 ];
 
@@ -693,6 +714,42 @@ function normalizeTimeZoneSetting(formData) {
   } catch {
     return null;
   }
+}
+
+function getSubmittedSpecialDateRewards(formData, errors) {
+  return Object.fromEntries(
+    SPECIAL_DATE_REWARD_SLOTS.flatMap((slot) => {
+      const prefix = `specialDateReward${slot}`;
+      const enabled = formData.getAll(`${prefix}Enabled`).includes("true");
+      const heading = String(formData.get(`${prefix}Heading`) || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 160);
+      const points = Number(formData.get(`${prefix}Points`));
+
+      if (enabled && !heading) {
+        errors[`${prefix}Heading`] = "Enter a heading for this reward.";
+      }
+      if (enabled && (!Number.isInteger(points) || points < 1)) {
+        errors[`${prefix}Points`] =
+          "Enter a whole number of points greater than 0.";
+      }
+
+      return [
+        [`${prefix}Enabled`, enabled],
+        [
+          `${prefix}Heading`,
+          heading || DEFAULT_LOYALTY_SETTINGS[`${prefix}Heading`],
+        ],
+        [
+          `${prefix}Points`,
+          Number.isInteger(points) && points > 0
+            ? points
+            : DEFAULT_LOYALTY_SETTINGS[`${prefix}Points`],
+        ],
+      ];
+    }),
+  );
 }
 
 function normalizeColorSetting(formData, fieldName) {
@@ -1283,6 +1340,20 @@ function InfoIcon({ tooltip }) {
   );
 }
 
+function SettingsFieldLabel({ label, required = false, tooltip }) {
+  return (
+    <span className="field-label-with-info">
+      <span>{label}</span>
+      {required ? (
+        <span className="mandatory-indicator" aria-hidden="true">
+          *
+        </span>
+      ) : null}
+      {tooltip ? <InfoIcon tooltip={tooltip} /> : null}
+    </span>
+  );
+}
+
 function HeadlessApiEndpoint({ endpoint, initiallyOpen = false }) {
   const [copiedValue, setCopiedValue] = useState(null);
 
@@ -1472,7 +1543,10 @@ function RewardResourcePicker({
     <div className="reward-resource-picker">
       <input type="hidden" name={name} value={JSON.stringify(resources)} />
       <div className="reward-resource-picker__heading">
-        <span>{label}</span>
+        <SettingsFieldLabel
+          label={label}
+          tooltip={`Optionally limit this reward to selected ${resourceType}s.`}
+        />
         <s-button type="button" onClick={openPicker}>
           Select
         </s-button>
@@ -1637,59 +1711,84 @@ function RewardTierOptions({
                       </s-button>
                     ) : null}
                   </s-stack>
-                  <s-number-field
-                    label="Points required"
-                    name={config.pointsName}
-                    min="1"
-                    step="1"
-                    inputMode="numeric"
-                    value={reward.points}
-                    suffix="points"
-                    onInput={(event) =>
-                      updateRewardRow(index, "points", event.target.value)
-                    }
-                    error={
-                      errors[`${config.pointsErrorPrefix}.${index}`] ||
-                      undefined
-                    }
-                  ></s-number-field>
-                  <s-number-field
-                    label={config.amountLabel}
-                    name={config.amountName}
-                    min="0.01"
-                    step="0.01"
-                    inputMode="decimal"
-                    value={reward[config.amountKey]}
-                    onInput={(event) =>
-                      updateRewardRow(
-                        index,
-                        config.amountKey,
-                        event.target.value,
-                      )
-                    }
-                    error={
-                      errors[`${config.amountErrorPrefix}.${index}`] ||
-                      undefined
-                    }
-                  ></s-number-field>
+                  <div className="settings-field">
+                    <SettingsFieldLabel
+                      label="Points required"
+                      tooltip="Points a customer must spend to redeem this reward."
+                    />
+                    <s-number-field
+                      label="Points required"
+                      labelAccessibilityVisibility="exclusive"
+                      name={config.pointsName}
+                      min="1"
+                      step="1"
+                      inputMode="numeric"
+                      value={reward.points}
+                      suffix="points"
+                      onInput={(event) =>
+                        updateRewardRow(index, "points", event.target.value)
+                      }
+                      error={
+                        errors[`${config.pointsErrorPrefix}.${index}`] ||
+                        undefined
+                      }
+                    ></s-number-field>
+                  </div>
+                  <div className="settings-field">
+                    <SettingsFieldLabel
+                      label={config.amountLabel}
+                      tooltip={`Value issued for this ${config.heading.toLowerCase()} tier.`}
+                    />
+                    <s-number-field
+                      label={config.amountLabel}
+                      labelAccessibilityVisibility="exclusive"
+                      name={config.amountName}
+                      min="0.01"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={reward[config.amountKey]}
+                      onInput={(event) =>
+                        updateRewardRow(
+                          index,
+                          config.amountKey,
+                          event.target.value,
+                        )
+                      }
+                      error={
+                        errors[`${config.amountErrorPrefix}.${index}`] ||
+                        undefined
+                      }
+                    ></s-number-field>
+                  </div>
                   {config.allowRules !== false ? (
                     <div className="reward-rule-fields">
-                      <s-number-field
-                        label="Minimum cart spend"
-                        name={`${rewardType}RewardMinSpend`}
-                        min="0.01"
-                        step="0.01"
-                        inputMode="decimal"
-                        value={reward.minSpend || ""}
-                        details="Optional spend condition for this reward."
-                        onInput={(event) =>
-                          updateRewardRow(index, "minSpend", event.target.value)
-                        }
-                        error={
-                          errors[`${rewardType}RewardMinSpend.${index}`] ||
-                          undefined
-                        }
-                      ></s-number-field>
+                      <div className="settings-field">
+                        <SettingsFieldLabel
+                          label="Minimum cart spend"
+                          tooltip="Optional spend condition for this reward."
+                        />
+                        <s-number-field
+                          label="Minimum cart spend"
+                          labelAccessibilityVisibility="exclusive"
+                          name={`${rewardType}RewardMinSpend`}
+                          min="0.01"
+                          step="0.01"
+                          inputMode="decimal"
+                          value={reward.minSpend || ""}
+                          details="Optional spend condition for this reward."
+                          onInput={(event) =>
+                            updateRewardRow(
+                              index,
+                              "minSpend",
+                              event.target.value,
+                            )
+                          }
+                          error={
+                            errors[`${rewardType}RewardMinSpend.${index}`] ||
+                            undefined
+                          }
+                        ></s-number-field>
+                      </div>
                       <RewardResourcePicker
                         label="Products"
                         name={`${rewardType}RewardProducts`}
@@ -1859,6 +1958,7 @@ export const action = async ({ request }) => {
   values.birthdayRewardEnabled = formData
     .getAll("birthdayRewardEnabled")
     .includes("true");
+  Object.assign(values, getSubmittedSpecialDateRewards(formData, errors));
   const birthdayRewardTimeZone = normalizeTimeZoneSetting(formData);
   if (!birthdayRewardTimeZone) {
     errors.birthdayRewardTimeZone =
@@ -2154,6 +2254,14 @@ export default function LoyaltySettingsPage() {
     values,
     "birthdayRewardEnabled",
   );
+  const specialDateReward1Enabled = getBooleanSettingValue(
+    values,
+    "specialDateReward1Enabled",
+  );
+  const specialDateReward2Enabled = getBooleanSettingValue(
+    values,
+    "specialDateReward2Enabled",
+  );
   const pointsExpiryApplyToExisting = getBooleanSettingValue(
     values,
     "pointsExpiryApplyToExisting",
@@ -2176,6 +2284,10 @@ export default function LoyaltySettingsPage() {
   const [isBirthdayRewardEnabled, setIsBirthdayRewardEnabled] = useState(
     birthdayRewardEnabled,
   );
+  const [isSpecialDateReward1Enabled, setIsSpecialDateReward1Enabled] =
+    useState(specialDateReward1Enabled);
+  const [isSpecialDateReward2Enabled, setIsSpecialDateReward2Enabled] =
+    useState(specialDateReward2Enabled);
   const [pointsExpiryUnit, setPointsExpiryUnit] = useState(
     savedPointsExpiryUnit,
   );
@@ -2207,6 +2319,12 @@ export default function LoyaltySettingsPage() {
   useEffect(() => {
     setIsBirthdayRewardEnabled(birthdayRewardEnabled);
   }, [birthdayRewardEnabled]);
+  useEffect(() => {
+    setIsSpecialDateReward1Enabled(specialDateReward1Enabled);
+  }, [specialDateReward1Enabled]);
+  useEffect(() => {
+    setIsSpecialDateReward2Enabled(specialDateReward2Enabled);
+  }, [specialDateReward2Enabled]);
   useEffect(() => {
     setPointsExpiryUnit(savedPointsExpiryUnit);
   }, [savedPointsExpiryUnit]);
@@ -2369,18 +2487,124 @@ export default function LoyaltySettingsPage() {
                               {isBirthdayRewardEnabled ? "On" : "Off"}
                             </span>
                           </div>
-                          <s-text-field
-                            label="Birthday reward time zone"
-                            name="birthdayRewardTimeZone"
-                            value={getSettingValue(
-                              values,
-                              "birthdayRewardTimeZone",
-                            )}
-                            details="IANA time zone used to determine each reward date."
-                            error={errors.birthdayRewardTimeZone || undefined}
-                            required
-                          ></s-text-field>
+                          <div className="settings-field">
+                            <SettingsFieldLabel
+                              label="Annual rewards time zone"
+                              required
+                              tooltip="IANA time zone used for birthday and special-date reward processing."
+                            />
+                            <s-text-field
+                              label="Annual rewards time zone"
+                              labelAccessibilityVisibility="exclusive"
+                              name="birthdayRewardTimeZone"
+                              value={getSettingValue(
+                                values,
+                                "birthdayRewardTimeZone",
+                              )}
+                              details="Used for birthday and special-date rewards."
+                              error={errors.birthdayRewardTimeZone || undefined}
+                              required
+                            ></s-text-field>
+                          </div>
                         </>
+                      ) : null}
+
+                      {group.title === "Special date rewards" ? (
+                        <div className="special-date-reward-grid">
+                          {[
+                            {
+                              slot: 1,
+                              enabled: isSpecialDateReward1Enabled,
+                              setEnabled: setIsSpecialDateReward1Enabled,
+                            },
+                            {
+                              slot: 2,
+                              enabled: isSpecialDateReward2Enabled,
+                              setEnabled: setIsSpecialDateReward2Enabled,
+                            },
+                          ].map(({ slot, enabled, setEnabled }) => {
+                            const prefix = `specialDateReward${slot}`;
+
+                            return (
+                              <div
+                                className="special-date-reward-card"
+                                key={slot}
+                              >
+                                <div className="redemption-toggle">
+                                  <input
+                                    id={`${prefix}Enabled`}
+                                    type="checkbox"
+                                    name={`${prefix}Enabled`}
+                                    value="true"
+                                    checked={enabled}
+                                    onChange={(event) =>
+                                      setEnabled(event.target.checked)
+                                    }
+                                  />
+                                  <div>
+                                    <label htmlFor={`${prefix}Enabled`}>
+                                      Enable special reward {slot}
+                                    </label>
+                                    <p>
+                                      Let each customer choose a personal date,
+                                      such as their anniversary.
+                                    </p>
+                                  </div>
+                                  <span>{enabled ? "On" : "Off"}</span>
+                                </div>
+
+                                <div className="special-date-reward-fields">
+                                  <div className="settings-field">
+                                    <SettingsFieldLabel
+                                      label="Reward heading"
+                                      required={enabled}
+                                      tooltip="The dynamic reward name shown in history and email notifications."
+                                    />
+                                    <s-text-field
+                                      label="Reward heading"
+                                      labelAccessibilityVisibility="exclusive"
+                                      name={`${prefix}Heading`}
+                                      value={getSettingValue(
+                                        values,
+                                        `${prefix}Heading`,
+                                      )}
+                                      maxLength={160}
+                                      error={
+                                        errors[`${prefix}Heading`] || undefined
+                                      }
+                                      required={enabled || undefined}
+                                    ></s-text-field>
+                                  </div>
+
+                                  <div className="settings-field">
+                                    <SettingsFieldLabel
+                                      label="Reward points"
+                                      required={enabled}
+                                      tooltip="Points credited to each loyalty customer on this annual date."
+                                    />
+                                    <s-number-field
+                                      label="Reward points"
+                                      labelAccessibilityVisibility="exclusive"
+                                      name={`${prefix}Points`}
+                                      min={1}
+                                      step={1}
+                                      inputMode="numeric"
+                                      value={getSettingValue(
+                                        values,
+                                        `${prefix}Points`,
+                                      )}
+                                      suffix="points"
+                                      error={
+                                        errors[`${prefix}Points`] || undefined
+                                      }
+                                      required={enabled || undefined}
+                                    ></s-number-field>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       ) : null}
 
                       <div className="rule-field-grid">
@@ -2389,12 +2613,14 @@ export default function LoyaltySettingsPage() {
 
                           return (
                             <div className="rule-field" key={field.name}>
-                              <div className="field-label-with-info">
-                                <span>{field.label}</span>
-                                <InfoIcon tooltip={field.description} />
-                              </div>
+                              <SettingsFieldLabel
+                                label={field.label}
+                                required
+                                tooltip={field.description}
+                              />
                               <s-number-field
                                 label={field.label}
+                                labelAccessibilityVisibility="exclusive"
                                 name={field.name}
                                 min={1}
                                 step={1}
@@ -2448,21 +2674,33 @@ export default function LoyaltySettingsPage() {
                       </div>
 
                       <div className="expiry-rule-grid">
-                        <s-number-field
-                          label="Points lifetime"
-                          name="pointsExpiryValue"
-                          min="1"
-                          max={pointsExpiryUnit === "days" ? "3650" : "120"}
-                          step="1"
-                          inputMode="numeric"
-                          value={getSettingValue(values, "pointsExpiryValue")}
-                          details="The lifetime assigned to each new earning batch."
-                          error={errors.pointsExpiryValue || undefined}
-                          required
-                        ></s-number-field>
+                        <div className="settings-field">
+                          <SettingsFieldLabel
+                            label="Points lifetime"
+                            required
+                            tooltip="The lifetime assigned to each new earning batch."
+                          />
+                          <s-number-field
+                            label="Points lifetime"
+                            labelAccessibilityVisibility="exclusive"
+                            name="pointsExpiryValue"
+                            min="1"
+                            max={pointsExpiryUnit === "days" ? "3650" : "120"}
+                            step="1"
+                            inputMode="numeric"
+                            value={getSettingValue(values, "pointsExpiryValue")}
+                            details="The lifetime assigned to each new earning batch."
+                            error={errors.pointsExpiryValue || undefined}
+                            required
+                          ></s-number-field>
+                        </div>
 
                         <label className="expiry-unit-field">
-                          <span>Lifetime unit</span>
+                          <SettingsFieldLabel
+                            label="Lifetime unit"
+                            required
+                            tooltip="Choose whether the points lifetime is measured in calendar months or days."
+                          />
                           <select
                             name="pointsExpiryUnit"
                             value={pointsExpiryUnit}
@@ -2548,8 +2786,14 @@ export default function LoyaltySettingsPage() {
 
                       <div className="email-toggle-grid">
                         {EMAIL_NOTIFICATION_FIELDS.map((field) => (
-                          <label className="email-toggle" key={field.name}>
+                          <label
+                            aria-label={field.label}
+                            className="email-toggle"
+                            htmlFor={`email-toggle-${field.name}`}
+                            key={field.name}
+                          >
                             <input
+                              id={`email-toggle-${field.name}`}
                               type="checkbox"
                               name={field.name}
                               value="true"
@@ -2565,6 +2809,27 @@ export default function LoyaltySettingsPage() {
                           </label>
                         ))}
                       </div>
+
+                      <s-grid
+                        gridTemplateColumns="1fr auto"
+                        gap="base"
+                        alignItems="center"
+                      >
+                        <s-grid-item>
+                          <s-stack gap="small-100">
+                            <s-heading>Dynamic email templates</s-heading>
+                            <s-text color="subdued">
+                              Customize the subject, message, and action for
+                              every loyalty email.
+                            </s-text>
+                          </s-stack>
+                        </s-grid-item>
+                        <s-grid-item>
+                          <s-button href="/app/email-templates">
+                            Manage templates
+                          </s-button>
+                        </s-grid-item>
+                      </s-grid>
                     </s-stack>
                   </section>
 
@@ -2582,24 +2847,31 @@ export default function LoyaltySettingsPage() {
 
                       <div className="segmentation-rule-grid">
                         {SEGMENTATION_FIELDS.map((field) => (
-                          <s-number-field
-                            key={field.name}
-                            label={field.label}
-                            name={field.name}
-                            min={field.min}
-                            max={field.max}
-                            step={field.step}
-                            inputMode={field.inputMode}
-                            value={getSettingValue(values, field.name)}
-                            suffix={
-                              field.name === "vipSpendThreshold"
-                                ? currencyCode
-                                : field.suffix
-                            }
-                            details={field.details}
-                            error={errors[field.name] || undefined}
-                            required
-                          ></s-number-field>
+                          <div className="settings-field" key={field.name}>
+                            <SettingsFieldLabel
+                              label={field.label}
+                              required
+                              tooltip={field.details}
+                            />
+                            <s-number-field
+                              label={field.label}
+                              labelAccessibilityVisibility="exclusive"
+                              name={field.name}
+                              min={field.min}
+                              max={field.max}
+                              step={field.step}
+                              inputMode={field.inputMode}
+                              value={getSettingValue(values, field.name)}
+                              suffix={
+                                field.name === "vipSpendThreshold"
+                                  ? currencyCode
+                                  : field.suffix
+                              }
+                              details={field.details}
+                              error={errors[field.name] || undefined}
+                              required
+                            ></s-number-field>
+                          </div>
                         ))}
                       </div>
                     </s-stack>
@@ -2638,8 +2910,14 @@ export default function LoyaltySettingsPage() {
                       </div>
 
                       <div className="checkout-limit-field">
+                        <SettingsFieldLabel
+                          label="Reward options shown"
+                          required
+                          tooltip="Limit how many configured reward options appear in checkout and the theme widget."
+                        />
                         <s-number-field
                           label="Reward options shown"
+                          labelAccessibilityVisibility="exclusive"
                           name="checkoutRewardLimit"
                           min="1"
                           max="20"
@@ -2742,13 +3020,19 @@ export default function LoyaltySettingsPage() {
 
                       <div className="iframe-text-grid">
                         {IFRAME_TEXT_FIELDS.map((field) => (
-                          <s-text-field
-                            key={field.name}
-                            label={field.label}
-                            name={field.name}
-                            value={getSettingValue(values, field.name)}
-                            details={field.details}
-                          ></s-text-field>
+                          <div className="settings-field" key={field.name}>
+                            <SettingsFieldLabel
+                              label={field.label}
+                              tooltip={field.details}
+                            />
+                            <s-text-field
+                              label={field.label}
+                              labelAccessibilityVisibility="exclusive"
+                              name={field.name}
+                              value={getSettingValue(values, field.name)}
+                              details={field.details}
+                            ></s-text-field>
+                          </div>
                         ))}
                       </div>
 
@@ -2761,7 +3045,10 @@ export default function LoyaltySettingsPage() {
                               className="iframe-color-field"
                               key={field.name}
                             >
-                              <span>{field.label}</span>
+                              <SettingsFieldLabel
+                                label={field.label}
+                                tooltip={`Choose the ${field.label.toLowerCase()} used by iframe widgets.`}
+                              />
                               <div>
                                 <input
                                   type="color"
@@ -2782,47 +3069,66 @@ export default function LoyaltySettingsPage() {
                       </div>
 
                       <div className="iframe-font-grid">
-                        <s-select
-                          label="Font family"
-                          details="Choose from web-safe options and commonly used Google fonts."
-                          value={iframeAppearance.iframeFontFamily}
-                          onChange={(event) =>
-                            setIframeAppearance((current) => ({
-                              ...current,
-                              iframeFontFamily: event.currentTarget.value,
-                            }))
-                          }
-                          required
-                        >
-                          {IFRAME_FONT_FAMILY_OPTIONS.map((option) => (
-                            <s-option key={option.value} value={option.value}>
-                              {option.label}
-                            </s-option>
-                          ))}
-                        </s-select>
+                        <div className="settings-field">
+                          <SettingsFieldLabel
+                            label="Font family"
+                            required
+                            tooltip="Choose from web-safe options and commonly used Google fonts."
+                          />
+                          <s-select
+                            label="Font family"
+                            labelAccessibilityVisibility="exclusive"
+                            details="Choose from web-safe options and commonly used Google fonts."
+                            value={iframeAppearance.iframeFontFamily}
+                            onChange={(event) =>
+                              setIframeAppearance((current) => ({
+                                ...current,
+                                iframeFontFamily: event.currentTarget.value,
+                              }))
+                            }
+                            required
+                          >
+                            {IFRAME_FONT_FAMILY_OPTIONS.map((option) => (
+                              <s-option key={option.value} value={option.value}>
+                                {option.label}
+                              </s-option>
+                            ))}
+                          </s-select>
+                        </div>
 
-                        <s-number-field
-                          label="Font size"
-                          min="12"
-                          max="20"
-                          step="1"
-                          inputMode="numeric"
-                          value={String(iframeAppearance.iframeFontSize)}
-                          suffix="px"
-                          details="Base text size for iframe widgets."
-                          error={errors.iframeFontSize || undefined}
-                          onInput={(event) =>
-                            setIframeAppearance((current) => ({
-                              ...current,
-                              iframeFontSize: event.target.value,
-                            }))
-                          }
-                          required
-                        ></s-number-field>
+                        <div className="settings-field">
+                          <SettingsFieldLabel
+                            label="Font size"
+                            required
+                            tooltip="Base text size for iframe widgets."
+                          />
+                          <s-number-field
+                            label="Font size"
+                            labelAccessibilityVisibility="exclusive"
+                            min="12"
+                            max="20"
+                            step="1"
+                            inputMode="numeric"
+                            value={String(iframeAppearance.iframeFontSize)}
+                            suffix="px"
+                            details="Base text size for iframe widgets."
+                            error={errors.iframeFontSize || undefined}
+                            onInput={(event) =>
+                              setIframeAppearance((current) => ({
+                                ...current,
+                                iframeFontSize: event.target.value,
+                              }))
+                            }
+                            required
+                          ></s-number-field>
+                        </div>
                       </div>
 
                       <label className="iframe-custom-css-field">
-                        <span>Custom CSS</span>
+                        <SettingsFieldLabel
+                          label="Custom CSS"
+                          tooltip="Optional CSS overrides applied to iframe widgets."
+                        />
                         <textarea
                           name="iframeCustomCss"
                           value={iframeAppearance.iframeCustomCss}
@@ -3159,6 +3465,29 @@ const settingsStyles = `
     min-width: 0;
   }
 
+  .special-date-reward-grid {
+    display: grid;
+    gap: 12px;
+  }
+
+  .special-date-reward-card {
+    border: 1px solid #dfe3e8;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .special-date-reward-fields {
+    border-top: 1px solid #e3e5e8;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 14px;
+  }
+
+  .settings-field {
+    min-width: 0;
+  }
+
   .redemption-toggle {
     align-items: start;
     display: grid;
@@ -3450,6 +3779,10 @@ const settingsStyles = `
     font-size: 13px;
     font-weight: 650;
     line-height: 20px;
+  }
+
+  .reward-resource-picker__heading .field-label-with-info {
+    margin-bottom: 0;
   }
 
   .reward-resource-picker small {
@@ -3818,6 +4151,10 @@ const settingsStyles = `
       grid-template-columns: 1fr;
     }
 
+    .special-date-reward-fields {
+      grid-template-columns: 1fr;
+    }
+
     .hero-summary,
     .iframe-text-grid,
     .iframe-font-grid,
@@ -3927,7 +4264,7 @@ const settingsStyles = `
   }
 
   .field-label-with-info {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 4px;
     margin-bottom: 8px;
@@ -3935,6 +4272,11 @@ const settingsStyles = `
     color: #202223;
     font-size: 13px;
     line-height: 20px;
+  }
+
+  .mandatory-indicator {
+    color: #d72c0d !important;
+    font-weight: 700;
   }
 
 `;

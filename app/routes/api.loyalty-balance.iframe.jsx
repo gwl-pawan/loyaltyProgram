@@ -68,6 +68,14 @@ function getShopifyCustomerId(customerId) {
   return String(customerId).split("/").pop();
 }
 
+function formatOrderReference(orderName) {
+  const reference = String(orderName || "").trim();
+  const orderNumber = reference.match(/^#?(\d+)$/)?.[1];
+
+  if (orderNumber) return `#${orderNumber}`;
+  return reference.startsWith("gid://") ? "-" : reference || "-";
+}
+
 function parseJsonParam(value, fallback) {
   if (!value) {
     return fallback;
@@ -978,7 +986,7 @@ function renderAccountHistoryRows(history, noHistoryMessage, currencyCode) {
                       formatHistoryAmount(item.discountAmount, currencyCode),
                     )}</td>
                     <td data-label="Order">${escapeHtml(
-                      item.orderName || item.orderId || "-",
+                      formatOrderReference(item.orderName),
                     )}</td>
                     <td data-label="Message" class="gwl-account-loyalty__history-message">${escapeHtml(
                       item.message || "-",

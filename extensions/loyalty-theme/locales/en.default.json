@@ -17,5 +17,24 @@
     "error": "Could not update your birthday. Please try again.",
     "login_prompt": "Sign in to add your birthday.",
     "login": "Sign in"
+  },
+  "special_dates": {
+    "heading": "Special date rewards",
+    "description": "Save personal dates such as your anniversary to receive annual points gifts.",
+    "rule": "Earn {{ points }} points once a year. Save the date at least {{ days }} days in advance to qualify.",
+    "month": "Month",
+    "day": "Day",
+    "privacy": "Only the month and day are stored. The year is not collected.",
+    "save": "Save date",
+    "update": "Update date",
+    "remove": "Remove date",
+    "saved_label": "Saved date: {{ date }}",
+    "loading": "Updating special date...",
+    "saved": "Special date saved for annual rewards.",
+    "removed": "Special date removed.",
+    "error": "Could not update your special date. Please try again.",
+    "unavailable": "Special date rewards are currently unavailable.",
+    "login_prompt": "Sign in to add your special dates.",
+    "login": "Sign in"
   }
 }

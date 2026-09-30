@@ -11,15 +11,26 @@ import {
 import {
   loadCustomerId,
   deleteBirthdayProfile,
+  deleteSpecialDateProfile,
   loadBirthdayProfile,
+  loadSpecialDateProfile,
   loadLoyaltyBalance,
   loadLoyaltyHistory,
   loadReferralProfile,
   redeemLoyaltyReward,
   saveBirthdayProfile,
+  saveSpecialDateProfile,
 } from '~/lib/loyalty';
 
 const REWARD_HISTORY_PAGE_SIZE = 8;
+
+function formatOrderReference(orderName) {
+  const reference = String(orderName || '').trim();
+  const orderNumber = reference.match(/^#?(\d+)$/)?.[1];
+
+  if (orderNumber) return `#${orderNumber}`;
+  return reference.startsWith('gid://') ? '-' : reference || '-';
+}
 
 /**
  * @type {Route.MetaFunction}
@@ -53,6 +64,13 @@ export async function action({request, context}) {
 
   if (request.method === 'POST' && form.get('loyaltyAction') === 'birthday') {
     return updateAccountBirthday({context, customerAccount, form});
+  }
+
+  if (
+    request.method === 'POST' &&
+    form.get('loyaltyAction') === 'special-date'
+  ) {
+    return updateAccountSpecialDate({context, customerAccount, form});
   }
 
   if (request.method !== 'PUT') {
@@ -107,13 +125,15 @@ export async function action({request, context}) {
 
 export default function AccountProfile() {
   const account = useOutletContext();
-  const {loyalty, history, referral, birthday} = useLoaderData();
+  const {loyalty, history, referral, birthday, specialDates} = useLoaderData();
   const navigation = useNavigation();
   /** @type {ActionReturnData} */
   const action = useActionData();
   const profileAction = action?.actionType === 'profile' ? action : null;
   const loyaltyAction = action?.actionType === 'loyalty' ? action : null;
   const birthdayAction = action?.actionType === 'birthday' ? action : null;
+  const specialDateAction =
+    action?.actionType === 'special-date' ? action : null;
   const customer = profileAction?.customer ?? account?.customer;
   const isProfileSubmitting =
     navigation.state !== 'idle' &&
@@ -124,6 +144,9 @@ export default function AccountProfile() {
   const isBirthdaySubmitting =
     navigation.state !== 'idle' &&
     navigation.formData?.get('loyaltyAction') === 'birthday';
+  const isSpecialDateSubmitting =
+    navigation.state !== 'idle' &&
+    navigation.formData?.get('loyaltyAction') === 'special-date';
 
   return (
     <div className="account-profile">
@@ -179,6 +202,12 @@ export default function AccountProfile() {
           success={birthdayAction?.success}
           isSubmitting={isBirthdaySubmitting}
         />
+        <AccountSpecialDateForm
+          specialDates={specialDateAction?.specialDates || specialDates}
+          message={specialDateAction?.message}
+          success={specialDateAction?.success}
+          isSubmitting={isSpecialDateSubmitting}
+        />
       </section>
       <AccountLoyaltyPanel
         loyalty={loyalty}
@@ -207,16 +236,23 @@ async function loadAccountLoyaltyData(context) {
         history: [],
         referral: null,
         birthday: null,
+        specialDates: null,
       };
     }
 
-    const [loyaltyResult, historyResult, referralResult, birthdayResult] =
-      await Promise.allSettled([
-        loadLoyaltyBalance(context, customerId),
-        loadLoyaltyHistory(context, customerId),
-        loadReferralProfile(context, customerId),
-        loadBirthdayProfile(context, customerId),
-      ]);
+    const [
+      loyaltyResult,
+      historyResult,
+      referralResult,
+      birthdayResult,
+      specialDatesResult,
+    ] = await Promise.allSettled([
+      loadLoyaltyBalance(context, customerId),
+      loadLoyaltyHistory(context, customerId),
+      loadReferralProfile(context, customerId),
+      loadBirthdayProfile(context, customerId),
+      loadSpecialDateProfile(context, customerId),
+    ]);
     const loyalty =
       loyaltyResult.status === 'fulfilled'
         ? loyaltyResult.value
@@ -240,6 +276,10 @@ async function loadAccountLoyaltyData(context) {
       birthdayResult.status === 'fulfilled'
         ? birthdayResult.value?.birthday || null
         : null;
+    const specialDates =
+      specialDatesResult.status === 'fulfilled'
+        ? specialDatesResult.value?.specialDates || null
+        : null;
 
     if (historyResult.status === 'rejected') {
       console.error(
@@ -257,6 +297,7 @@ async function loadAccountLoyaltyData(context) {
       history,
       referral,
       birthday,
+      specialDates,
     };
   } catch (error) {
     console.error(
@@ -276,7 +317,50 @@ async function loadAccountLoyaltyData(context) {
       history: [],
       referral: null,
       birthday: null,
+      specialDates: null,
     };
+  }
+}
+
+async function updateAccountSpecialDate({context, customerAccount, form}) {
+  try {
+    const customerId = await loadCustomerId(customerAccount);
+    if (!customerId) {
+      return data(
+        {actionType: 'special-date', success: false, message: 'Sign in first.'},
+        {status: 401},
+      );
+    }
+
+    const slot = Number(form.get('specialDateSlot'));
+    const isDelete = form.get('specialDateIntent') === 'delete';
+    const result = isDelete
+      ? await deleteSpecialDateProfile(context, customerId, slot)
+      : await saveSpecialDateProfile(context, customerId, slot, {
+          month: Number(form.get('specialDateMonth')),
+          day: Number(form.get('specialDateDay')),
+        });
+    const reward = result.specialDates?.rewards?.find(
+      (item) => item.slot === slot,
+    );
+
+    return data({
+      actionType: 'special-date',
+      success: true,
+      message: isDelete
+        ? `${reward?.heading || 'Special date'} removed.`
+        : `${reward?.heading || 'Special date'} saved for annual rewards.`,
+      specialDates: result.specialDates,
+    });
+  } catch (error) {
+    return data(
+      {
+        actionType: 'special-date',
+        success: false,
+        message: error?.message || 'Could not save special date.',
+      },
+      {status: 400},
+    );
   }
 }
 
@@ -412,6 +496,137 @@ function AccountBirthdayForm({birthday, message, success, isSubmitting}) {
         </div>
       ) : (
         <p>Birthday rewards are currently unavailable.</p>
+      )}
+    </div>
+  );
+}
+
+function AccountSpecialDateForm({
+  specialDates,
+  message,
+  success,
+  isSubmitting,
+}) {
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  const enabledRewards = (specialDates?.rewards || []).filter(
+    (reward) => reward.enabled,
+  );
+
+  return (
+    <div className="account-profile__birthday">
+      <div className="account-section-heading">
+        <span>Loyalty</span>
+        <h2>Special date rewards</h2>
+      </div>
+      {enabledRewards.length ? (
+        <div className="account-profile__form">
+          <p>
+            Save a personal date, such as your anniversary, at least{' '}
+            {specialDates.minimumLeadDays} days before it occurs.
+          </p>
+          <small>{specialDates.privacy}</small>
+          {message ? (
+            <p className={success ? undefined : 'account-profile__error'}>
+              <small>{message}</small>
+            </p>
+          ) : null}
+          {enabledRewards.map((reward) => (
+            <div key={`${reward.slot}-${reward.date?.label || 'empty'}`}>
+              <h3>{reward.heading}</h3>
+              <p>Earn {reward.points} points once a year.</p>
+              {reward.date ? (
+                <p>
+                  <strong>Saved date: {reward.date.label}</strong>
+                  {reward.lastIssuedYear
+                    ? ` · Last rewarded ${reward.lastIssuedYear}`
+                    : ''}
+                </p>
+              ) : null}
+              <Form method="POST" className="account-profile__form">
+                <input
+                  type="hidden"
+                  name="loyaltyAction"
+                  value="special-date"
+                />
+                <input
+                  type="hidden"
+                  name="specialDateSlot"
+                  value={reward.slot}
+                />
+                <div className="account-profile__fields">
+                  <label htmlFor={`specialDateMonth-${reward.slot}`}>
+                    Month
+                    <select
+                      id={`specialDateMonth-${reward.slot}`}
+                      name="specialDateMonth"
+                      defaultValue={reward.date?.month || ''}
+                      required
+                    >
+                      <option value="">Select month</option>
+                      {months.map((month, index) => (
+                        <option key={month} value={index + 1}>
+                          {month}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label htmlFor={`specialDateDay-${reward.slot}`}>
+                    Day
+                    <select
+                      id={`specialDateDay-${reward.slot}`}
+                      name="specialDateDay"
+                      defaultValue={reward.date?.day || ''}
+                      required
+                    >
+                      <option value="">Select day</option>
+                      {Array.from({length: 31}, (_, index) => index + 1).map(
+                        (day) => (
+                          <option key={day} value={day}>
+                            {day}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                </div>
+                <div className="account-profile__actions">
+                  <button type="submit" disabled={isSubmitting}>
+                    {isSubmitting
+                      ? 'Saving'
+                      : reward.date
+                        ? 'Update date'
+                        : 'Save date'}
+                  </button>
+                  {reward.date ? (
+                    <button
+                      type="submit"
+                      name="specialDateIntent"
+                      value="delete"
+                      disabled={isSubmitting}
+                    >
+                      Remove date
+                    </button>
+                  ) : null}
+                </div>
+              </Form>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p>Special date rewards are currently unavailable.</p>
       )}
     </div>
   );
@@ -852,7 +1067,7 @@ function RewardHistory({history, currencyCode}) {
                     {formatAmount(item.discountAmount, currencyCode)}
                   </td>
                   <td data-label="Order">
-                    {item.orderName || item.orderId || '-'}
+                    {formatOrderReference(item.orderName)}
                   </td>
                   <td
                     data-label="Message"

@@ -1,5 +1,9 @@
 # Birthday rewards
 
+The same annual worker also processes the two optional merchant-configured
+customer-selected special date rewards described in
+[Special date rewards](special-date-rewards.md).
+
 The birthday reward system collects only a customer's birth month and day and awards configured loyalty points once per calendar year.
 
 ## Merchant configuration

@@ -145,7 +145,13 @@ async function sendWithSendGridProvider(message) {
 }
 
 export async function sendLoyaltyEmail(notification) {
-  const message = buildLoyaltyEmailMessage(notification);
+  const settings = await prisma.emailNotificationSetting.findUnique({
+    where: { shopId: notification.shopId },
+    select: { templates: true },
+  });
+  const message = buildLoyaltyEmailMessage(notification, {
+    templates: settings?.templates,
+  });
   const provider = getEmailProvider();
 
   if (provider === RESEND_EMAIL_PROVIDER) {

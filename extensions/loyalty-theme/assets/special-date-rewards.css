@@ -1,0 +1,85 @@
+.loyalty-special-dates {
+  border: 1px solid rgba(32, 34, 35, 0.16);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.loyalty-special-dates h2,
+.loyalty-special-dates h3,
+.loyalty-special-dates p {
+  margin: 0;
+}
+
+.loyalty-special-dates [data-special-date-list],
+.loyalty-special-dates form {
+  display: grid;
+  gap: 14px;
+}
+
+.loyalty-special-dates form {
+  border-top: 1px solid rgba(32, 34, 35, 0.16);
+  padding-top: 16px;
+}
+
+.loyalty-special-dates__fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.loyalty-special-dates label {
+  display: grid;
+  gap: 6px;
+}
+
+.loyalty-special-dates label span {
+  font-weight: 600;
+}
+
+.loyalty-special-dates input {
+  border: 1px solid rgba(32, 34, 35, 0.28);
+  border-radius: 8px;
+  font: inherit;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.loyalty-special-dates__privacy {
+  color: rgba(32, 34, 35, 0.72);
+  font-size: 0.9em;
+}
+
+.loyalty-special-dates__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.loyalty-special-dates button {
+  background: transparent;
+  border: 1px solid var(--special-date-accent);
+  border-radius: 8px;
+  color: var(--special-date-accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 10px 14px;
+}
+
+.loyalty-special-dates button[type="submit"] {
+  background: var(--special-date-accent);
+  color: #fff;
+}
+
+.loyalty-special-dates button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+@media (max-width: 480px) {
+  .loyalty-special-dates__fields {
+    grid-template-columns: 1fr;
+  }
+}

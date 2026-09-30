@@ -1,3 +1,8 @@
+import {
+  normalizeEmailTemplates,
+  renderEmailTemplate,
+} from "./email-notifications.shared.js";
+
 const DEFAULT_STORE_NAME = "Loyalty Rewards";
 
 function hasValue(value) {
@@ -66,19 +71,15 @@ function rewardLabel(payload = {}) {
 }
 
 function formatOrderReference(payload = {}) {
-  const reference = String(payload.orderName || payload.orderId || "").trim();
+  const reference = String(payload.orderName || "").trim();
 
   if (!reference) {
     return "";
   }
 
-  if (reference.startsWith("gid://")) {
-    const orderId = reference.split("/").pop();
+  const orderNumber = reference.match(/^#?(\d+)$/)?.[1];
 
-    return orderId ? `#${orderId}` : reference;
-  }
-
-  return reference;
+  return orderNumber ? `#${orderNumber}` : reference;
 }
 
 function getStoreUrl(shopDomain) {
@@ -198,8 +199,38 @@ function buildEventContent(eventType, payload) {
         ctaLabel: "View rewards",
       };
 
+    case "special_date_reward": {
+      const rewardHeading =
+        String(payload.rewardHeading || "").trim() || "Special day reward";
+
+      return {
+        category: "SPECIAL REWARD",
+        title: rewardHeading,
+        preheader: `${points} special reward points are waiting in your account.`,
+        intro:
+          "We added special reward points to your loyalty balance to celebrate with you.",
+        highlight: {
+          value: `+${points}`,
+          unit: "points",
+          label: rewardHeading,
+          tone: "positive",
+        },
+        details: compactDetails([
+          detail(
+            "New balance",
+            hasValue(payload.pointsBalanceAfter)
+              ? `${formatPoints(payload.pointsBalanceAfter)} points`
+              : "",
+          ),
+        ]),
+        note: "Use your points whenever you are ready for your next reward.",
+        ctaLabel: "View rewards",
+      };
+    }
+
     case "reward_created": {
       const reward = rewardLabel(payload);
+      const isStoreCredit = payload.rewardType === "store_credit";
 
       return {
         category: "REWARD READY",
@@ -218,10 +249,12 @@ function buildEventContent(eventType, payload) {
           detail("Points used", `${formatPoints(payload.pointsUsed)} points`),
           detail("Valid until", formatDate(payload.expiresAt)),
         ]),
-        rewardCode: payload.rewardCode || "",
-        note: payload.rewardCode
-          ? "Enter this code at checkout. Reward conditions may apply."
-          : "Your reward is available in your loyalty account.",
+        rewardCode: isStoreCredit ? "" : payload.rewardCode || "",
+        note: isStoreCredit
+          ? "Your store credit is available automatically at checkout."
+          : payload.rewardCode
+            ? "Enter this code at checkout. Reward conditions may apply."
+            : "Your reward is available in your loyalty account.",
         ctaLabel: "Shop with your reward",
       };
     }
@@ -577,19 +610,78 @@ function buildText({ content, greeting, storeName, storeUrl }) {
   return sections.filter(Boolean).join("\n\n");
 }
 
-export function buildLoyaltyEmailMessage(notification) {
+function getTemplatePoints(payload) {
+  return (
+    payload.points ??
+    payload.pointsExpiring ??
+    payload.pointsExpired ??
+    payload.pointsRefunded ??
+    payload.pointsDeducted ??
+    payload.pointsUsed ??
+    0
+  );
+}
+
+function buildTemplateVariables(notification, payload, storeName) {
+  return {
+    customer_name: notification.recipientName || "",
+    store_name: storeName,
+    points: formatPoints(getTemplatePoints(payload)),
+    points_balance: hasValue(payload.pointsBalanceAfter)
+      ? formatPoints(payload.pointsBalanceAfter)
+      : "",
+    order_number: formatOrderReference(payload),
+    order_total: formatMoney(payload.orderTotal, payload.currencyCode),
+    reward: rewardLabel(payload),
+    reward_code:
+      payload.rewardType === "store_credit" ? "" : payload.rewardCode || "",
+    refund_amount: formatMoney(payload.refundAmount, payload.currencyCode),
+    expiry_date: formatDate(payload.expiresAt || payload.expiredAt),
+    reward_heading: String(payload.rewardHeading || "").trim(),
+  };
+}
+
+function applyContentTemplate(content, template, variables) {
+  if (!template || typeof template !== "object") {
+    return content;
+  }
+
+  return {
+    ...content,
+    ...Object.fromEntries(
+      ["title", "intro", "note", "ctaLabel"]
+        .filter((field) => template[field])
+        .map((field) => [
+          field,
+          renderEmailTemplate(template[field], variables),
+        ]),
+    ),
+  };
+}
+
+export function buildLoyaltyEmailMessage(notification, options = {}) {
   const payload = notification?.payload || {};
   const storeUrl = getStoreUrl(payload.shopDomain);
   const storeName = getStoreName(payload.shopDomain);
   const greeting = notification.recipientName
     ? `Hi ${notification.recipientName},`
     : "Hi,";
-  const content = buildEventContent(notification.eventType, payload);
+  const templates = normalizeEmailTemplates(options.templates);
+  const template = templates[notification.eventType] || {};
+  const variables = buildTemplateVariables(notification, payload, storeName);
+  const content = applyContentTemplate(
+    buildEventContent(notification.eventType, payload),
+    template,
+    variables,
+  );
+  const customSubject = template.subject
+    ? renderEmailTemplate(template.subject, variables).trim()
+    : "";
 
   return {
     to: notification.recipientEmail,
     toName: notification.recipientName || undefined,
-    subject: notification.subject,
+    subject: customSubject || notification.subject,
     text: buildText({ content, greeting, storeName, storeUrl }),
     html: buildHtml({ content, greeting, storeName, storeUrl }),
   };

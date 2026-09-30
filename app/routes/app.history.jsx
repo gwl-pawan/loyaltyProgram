@@ -16,6 +16,8 @@ const activityLabels = {
   store_credit_failed: "Store credit failed",
   points_refunded: "Points refunded",
   points_expired: "Points expired",
+  birthday_rewarded: "Birthday reward",
+  special_date_rewarded: "Special date reward",
 };
 
 const statusTone = {
@@ -30,6 +32,8 @@ const statusTone = {
   store_credit_failed: "critical",
   points_refunded: "success",
   points_expired: "warning",
+  birthday_rewarded: "success",
+  special_date_rewarded: "success",
 };
 
 const emptyTotals = {
@@ -52,7 +56,14 @@ function getActivityLabel(activityType) {
 }
 
 function getRewardType(item) {
-  if (["points_refunded", "points_expired"].includes(item.activityType)) {
+  if (
+    [
+      "points_refunded",
+      "points_expired",
+      "birthday_rewarded",
+      "special_date_rewarded",
+    ].includes(item.activityType)
+  ) {
     return "points";
   }
 
@@ -97,6 +108,14 @@ function getOrderNumericId(orderId) {
   }
 
   return /^\d+$/.test(value) ? value : "";
+}
+
+function formatOrderReference(orderName) {
+  const reference = String(orderName || "").trim();
+  const orderNumber = reference.match(/^#?(\d+)$/)?.[1];
+
+  if (orderNumber) return `#${orderNumber}`;
+  return reference.startsWith("gid://") ? "" : reference;
 }
 
 function getOrderAdminUrl(shopDomain, orderId) {
@@ -416,10 +435,10 @@ export default function HistoryPage() {
                       "balanceAfterTransaction",
                     );
                     const orderId = getOrderIdFromLog(item);
-                    const orderName =
+                    const orderName = formatOrderReference(
                       getMetadataValue(item.metadata, "orderName") ||
-                      orderNameById[orderId] ||
-                      orderId;
+                        orderNameById[orderId],
+                    );
                     const orderAdminUrl =
                       getMetadataValue(item.metadata, "orderAdminUrl") ||
                       getOrderAdminUrl(shopDomain, orderId);

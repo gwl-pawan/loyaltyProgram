@@ -104,6 +104,33 @@ export async function deleteBirthdayProfile(context, customerId) {
   });
 }
 
+export async function loadSpecialDateProfile(context, customerId) {
+  const {shopDomain} = await getLoyaltyConfig(context);
+  const params = new URLSearchParams({customerId, shop: shopDomain});
+  return fetchLoyaltyJson(context, `/api/hydrogen/special-dates?${params}`);
+}
+
+export async function saveSpecialDateProfile(context, customerId, slot, date) {
+  const {shopDomain} = await getLoyaltyConfig(context);
+  return fetchLoyaltyJson(context, '/api/hydrogen/special-dates', {
+    method: 'POST',
+    body: JSON.stringify({shop: shopDomain, customerId, slot, date}),
+  });
+}
+
+export async function deleteSpecialDateProfile(context, customerId, slot) {
+  const {shopDomain} = await getLoyaltyConfig(context);
+  return fetchLoyaltyJson(context, '/api/hydrogen/special-dates', {
+    method: 'DELETE',
+    body: JSON.stringify({
+      shop: shopDomain,
+      customerId,
+      slot,
+      action: 'delete',
+    }),
+  });
+}
+
 export async function trackReferralVisit(
   context,
   {code, visitorToken, landingUrl},
